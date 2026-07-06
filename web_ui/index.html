@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AST 文本检测测试台</title>
+    <link rel="stylesheet" href="/static/app.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>AST 文本检测测试台</h1>
+        <p id="artifactStatus">加载模型产物中...</p>
+      </div>
+      <div class="model-controls">
+        <label>
+          模式
+          <select id="modeSelect"></select>
+        </label>
+        <label>
+          模型
+          <select id="modelSelect"></select>
+        </label>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="panel input-panel">
+        <div class="panel-head">
+          <h2>文本输入</h2>
+          <button id="clearBtn" class="icon-button" title="清空">×</button>
+        </div>
+        <textarea id="textInput" spellcheck="false">恭喜您获得免费提现红包，点击链接领取，加微信客服办理。</textarea>
+        <div class="samples" aria-label="样例文本">
+          <button class="sample" data-text="恭喜您获得免费提现红包，点击链接领取，加微信客服办理。">垃圾样例</button>
+          <button class="sample" data-text="您好，您预约的体检报告已生成，请在工作时间到服务台领取。">正常样例</button>
+          <button class="sample" data-text="免费领取100元话费，回复88加vx马上到账。">对抗样例</button>
+        </div>
+        <div class="actions">
+          <button id="predictBtn" class="primary">预测</button>
+          <button id="attackBtn">生成训练 AST</button>
+          <button id="compareBtn">对比模型</button>
+        </div>
+      </section>
+
+      <section class="panel result-panel">
+        <div class="panel-head">
+          <h2>预测结果</h2>
+          <span id="resultBadge" class="badge muted">等待输入</span>
+        </div>
+        <div class="prob-grid">
+          <div>
+            <div class="prob-label"><span>Spam</span><strong id="spamProb">--</strong></div>
+            <div class="bar"><span id="spamBar"></span></div>
+          </div>
+          <div>
+            <div class="prob-label"><span>Normal</span><strong id="normalProb">--</strong></div>
+            <div class="bar"><span id="normalBar"></span></div>
+          </div>
+        </div>
+        <dl class="facts">
+          <div><dt>置信度</dt><dd id="confidence">--</dd></div>
+          <div><dt>分词数</dt><dd id="tokenCount">--</dd></div>
+          <div><dt>未知词</dt><dd id="unknownCount">--</dd></div>
+        </dl>
+        <div class="tokens" id="tokens"></div>
+      </section>
+
+      <section class="panel attack-panel">
+        <div class="panel-head">
+          <h2>AST 扰动搜索</h2>
+          <span id="attackSummary" class="small-status">未运行</span>
+        </div>
+        <div id="bestAttack" class="best-attack empty">暂无候选</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>类型</th>
+                <th>文本</th>
+                <th>预测</th>
+                <th>Normal</th>
+              </tr>
+            </thead>
+            <tbody id="attackRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel metrics-panel">
+        <div class="panel-head">
+          <h2>模型指标</h2>
+          <span id="metricsCount" class="small-status">--</span>
+        </div>
+        <div class="table-wrap metrics-table">
+          <table>
+            <thead>
+              <tr>
+                <th>模式</th>
+                <th>模型</th>
+                <th>Clean</th>
+                <th>AST</th>
+                <th>Drop</th>
+                <th>UCI</th>
+              </tr>
+            </thead>
+            <tbody id="metricsRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel compare-panel">
+        <div class="panel-head">
+          <h2>模型对比</h2>
+          <span id="compareStatus" class="small-status">未运行</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>模式</th>
+                <th>模型</th>
+                <th>预测</th>
+                <th>Spam</th>
+                <th>Normal</th>
+              </tr>
+            </thead>
+            <tbody id="compareRows"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

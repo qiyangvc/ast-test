@@ -130,6 +130,125 @@ mkdir -p output word2vec/data/msglog
 
 ## 运行指南
 
+### AST对抗垃圾文本实验（新增）
+
+本项目已补充 AST（Adversarial Spam Text）数据构建、对抗训练和鲁棒性评估入口。提交版已经新增 `scripts/submission_pipeline.py`，可在当前 Python 3.12 环境下完成真实 Word2Vec 训练、MLP/CNN/RNN 训练、clean test、AST test、UCI 英文外部测试、AST 样本质量抽查和基于模型置信度搜索的攻击。
+
+详细说明见：
+
+```
+docs/AST_EXPERIMENT.md
+docs/SUBMISSION_REPORT.md
+```
+
+本次已执行的完整提交流水线：
+
+```bash
+.venv_submit/bin/python scripts/submission_pipeline.py \
+  --output-dir output/submission_full_20260706_full \
+  --vector-size 200 \
+  --max-vocab 50000 \
+  --max-len 64 \
+  --w2v-epochs 20 \
+  --clf-epochs 10 \
+  --batch-size 512 \
+  --confidence-attack-limit 0 \
+  --review-sample-size 0
+```
+
+主要输出：
+
+```text
+output/submission_full_20260706_full/SUBMISSION_REPORT.md
+output/submission_full_20260706_full/metrics/all_results.json
+output/submission_full_20260706_full/models/
+output/submission_full_20260706_full/word2vec/
+output/submission_full_20260706_full/attacks/
+output/submission_full_20260706_full/review/
+```
+
+本次完整产物约 505M。`output/` 和 `data/` 默认被 `.gitignore` 忽略，提交作业时如果需要附带训练结果，请同时打包 `output/submission_full_20260706_full/`。
+
+较强扰动 AST 扩展实验：
+
+```bash
+.venv_submit/bin/python scripts/run_strong_ast_experiment.py \
+  --dataset-dir data/ast_experiment_strong \
+  --output-dir output/submission_strong_ast_20260706_full
+```
+
+该脚本会复用 mild 实验的原始数据来源，重新构建 `ast_strength=strong` 的 AST 数据集，并以完整参数训练 Word2Vec、MLP/CNN/RNN、clean test、strong AST test、UCI test、strong 置信度搜索攻击和 AST 质量检查。默认参数为 `max_variants_spam=4`、`max_variants_normal=1`，不会覆盖现有 `output/submission_full_20260706_full/`。
+
+如果要做跨扰动测试，例如 mild 训练结果测试 strong AST、strong 训练结果测试 mild AST：
+
+```bash
+.venv_submit/bin/python scripts/evaluate_ast_cross.py \
+  --output-dir output/submission_full_20260706_full \
+  --dataset-dir data/ast_experiment_strong \
+  --name mild_on_strong
+
+.venv_submit/bin/python scripts/evaluate_ast_cross.py \
+  --output-dir output/submission_strong_ast_20260706_full \
+  --dataset-dir data/ast_experiment \
+  --name strong_on_mild
+```
+
+本次 mild 完整训练的关键结果：
+
+```text
+最佳 AST Acc: text_ast_fgm/cnn = 0.9731
+最低 Robust Drop: text_ast/rnn = 0.0018, text_ast_fgm/rnn = 0.0018
+最佳 UCI Acc: text_ast_fgm/rnn = 0.9324
+置信度搜索攻击: 5297 条，成功 246 条，ASR = 0.0464
+AST 自动质检: 13196 条，通过 13195 条，通过率 = 0.9999
+```
+
+本次 strong 完整训练的关键结果：
+
+```text
+最佳 strong AST Acc: text_ast_fgm/cnn = 0.9824
+最佳 strong UCI Acc: text_ast_fgm/rnn = 0.9616
+strong 置信度搜索攻击: 5308 条，成功 364 条，ASR = 0.0686
+strong AST 自动质检: 23808 条，通过 23807 条，通过率 = 0.99996
+跨扰动: mild->strong 最佳 text_ast/cnn = 0.9406；strong->mild 最佳 embedding_fgm/rnn = 0.9666
+```
+
+启动图形化测试程序：
+
+```bash
+.venv_submit/bin/python scripts/serve_submission_ui.py \
+  --output-dir output/submission_full_20260706_full \
+  --host 127.0.0.1 \
+  --port 7860
+```
+
+然后在浏览器打开：
+
+```text
+http://127.0.0.1:7860
+```
+
+该界面支持单条文本预测、spam/normal 置信度展示、AST 扰动候选搜索、12 个训练模型横向对比和完整指标表查看。它使用 Python 标准库 HTTP 服务，不需要额外安装 Flask、Streamlit 或 Gradio。
+
+构建 AST 数据集：
+
+```powershell
+python scripts/prepare_external_datasets.py
+python scripts/build_ast_dataset.py `
+  --input-dir tensorlayer_text_antispam=data/external/raw/tensorlayer_text_antispam/msglog `
+  --canonical-jsonl spam_messages_lr=data/external/canonical/spam_messages_lr.jsonl `
+  --canonical-jsonl fbs_sms_dataset=data/external/canonical/fbs_sms_dataset.jsonl `
+  --output-dir data/ast_experiment
+```
+
+查看实验计划（不训练、不测试）：
+
+```powershell
+python scripts/run_ast_experiment.py --dataset-dir data/ast_experiment --mode text_ast_fgm --models rnn cnn
+```
+
+真正执行实验时需要显式添加 `--execute`。
+
 ### 1. 训练Word2Vec词向量
 
 ```powershell

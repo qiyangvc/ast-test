@@ -65,6 +65,50 @@ class Config:
         'pool_strides': 1,
         'dropout_keep': 0.5
     }
+
+    # AST数据集构建配置
+    AST_DATASET_CONFIG = {
+        'train_ratio': 0.7,
+        'val_ratio': 0.1,
+        'test_ratio': 0.2,
+        'seed': 42,
+        'max_variants_spam': 2,
+        'max_variants_normal': 1,
+        'ast_strength': 'mild',
+        'output_dir_name': 'ast_experiment'
+    }
+
+    # 较强扰动AST实验配置：单独产出，不覆盖已有mild AST结果
+    STRONG_AST_DATASET_CONFIG = {
+        'train_ratio': 0.7,
+        'val_ratio': 0.1,
+        'test_ratio': 0.2,
+        'seed': 42,
+        'max_variants_spam': 4,
+        'max_variants_normal': 1,
+        'ast_strength': 'strong',
+        'output_dir_name': 'ast_experiment_strong'
+    }
+
+    # Embedding级对抗训练配置
+    AST_TRAINING_CONFIG = {
+        'method': 'fgm',
+        'epsilon': 0.5,
+        'alpha': 0.5,
+        'pgd_steps': 3,
+        'pgd_step_size': 0.2,
+        'random_start': True,
+        'grad_norm': 'l2'
+    }
+
+    # AST实验配置：默认先dry-run，必须显式execute才训练/评估
+    AST_EXPERIMENT_CONFIG = {
+        'modes': ['baseline', 'text_ast', 'embedding_fgm', 'text_ast_fgm'],
+        'models': ['rnn', 'mlp', 'cnn'],
+        'default_mode': 'baseline',
+        'default_models': ['rnn', 'cnn'],
+        'dry_run_default': True
+    }
     
     @classmethod
     def get(cls, key: str) -> Any:
