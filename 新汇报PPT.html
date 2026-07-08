@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AST鲁棒垃圾文本分类系统 - 课程汇报</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body {
+            width: 100%;
+            height: 100%;
+            font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+            background: #1a1a2e;
+            color: #fff;
+            overflow: hidden;
+        }
+        .slide {
+            width: 100%;
+            height: 100%;
+            display: none;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 56px 76px;
+            position: relative;
+        }
+        .slide.active { display: flex; }
+
+        .title-slide { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); }
+        .title-slide h1 {
+            font-size: 52px;
+            margin-bottom: 20px;
+            background: linear-gradient(90deg, #00d4ff, #ffd700);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-align: center;
+            line-height: 1.25;
+        }
+        .title-slide .subtitle {
+            font-size: 28px;
+            color: #d8d8d8;
+            margin-bottom: 48px;
+            text-align: center;
+        }
+        .title-slide .info {
+            font-size: 21px;
+            color: #aaa;
+            line-height: 2;
+            text-align: center;
+        }
+
+        .content-slide { background: linear-gradient(135deg, #16213e 0%, #0f3460 100%); }
+        .content-slide h2 {
+            font-size: 40px;
+            margin-bottom: 34px;
+            color: #00d4ff;
+            align-self: flex-start;
+            border-left: 5px solid #ffd700;
+            padding-left: 20px;
+        }
+        .body {
+            width: 100%;
+            font-size: 25px;
+            line-height: 1.72;
+            color: #e8e8e8;
+        }
+        .body ul {
+            list-style: none;
+            padding-left: 0;
+        }
+        .body li {
+            margin-bottom: 14px;
+            padding-left: 30px;
+            position: relative;
+        }
+        .body li::before {
+            content: "▸";
+            position: absolute;
+            left: 0;
+            color: #00d4ff;
+            font-weight: bold;
+        }
+        .sub-list {
+            margin-top: 8px;
+            padding-left: 24px;
+            font-size: 21px;
+            color: #cfd8e3;
+        }
+        .highlight {
+            color: #ffd700;
+            font-weight: bold;
+        }
+        .muted { color: #aeb7c2; }
+        .two-col {
+            display: flex;
+            gap: 34px;
+            width: 100%;
+        }
+        .col { flex: 1; }
+        .col h3 {
+            font-size: 26px;
+            color: #ffd700;
+            margin-bottom: 16px;
+        }
+        .box {
+            background: rgba(0, 212, 255, 0.1);
+            border: 1px solid rgba(0, 212, 255, 0.34);
+            border-radius: 10px;
+            padding: 20px 26px;
+            margin: 18px 0;
+        }
+        .box strong { color: #00d4ff; }
+        .bridge-box {
+            padding: 12px 18px;
+            margin: 12px 0 0;
+            font-size: 18px;
+            line-height: 1.45;
+        }
+        .code-block {
+            background: rgba(0,0,0,0.28);
+            border-radius: 9px;
+            padding: 16px 22px;
+            font-family: "Consolas", monospace;
+            font-size: 19px;
+            color: #a8d5ba;
+            margin: 16px 0;
+            border-left: 4px solid #00d4ff;
+            white-space: pre-line;
+        }
+        .flow {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            margin: 24px 0;
+            flex-wrap: wrap;
+        }
+        .flow-box {
+            background: linear-gradient(135deg, #7b2cbf, #00d4ff);
+            padding: 14px 20px;
+            border-radius: 10px;
+            font-size: 19px;
+            font-weight: bold;
+            text-align: center;
+            min-width: 130px;
+            line-height: 1.25;
+        }
+        .flow-box span {
+            font-size: 13px;
+            color: #eef7ff;
+            font-weight: normal;
+        }
+        .flow-arrow {
+            font-size: 28px;
+            color: #00d4ff;
+        }
+        .diagram-body {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .diagram-wrap {
+            width: 100%;
+            height: min(66vh, 560px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0, 0, 0, 0.18);
+            border: 1px solid rgba(0, 212, 255, 0.24);
+            border-radius: 14px;
+            padding: 10px;
+        }
+        .architecture-diagram {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            display: block;
+        }
+        .diagram-caption {
+            margin: 0;
+            padding: 11px 16px;
+            font-size: 16px;
+            line-height: 1.42;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 20px;
+            margin-top: 16px;
+        }
+        th, td {
+            padding: 12px 16px;
+            text-align: left;
+            border-bottom: 1px solid rgba(255,255,255,0.18);
+        }
+        th {
+            background: rgba(0, 212, 255, 0.15);
+            color: #00d4ff;
+            font-weight: bold;
+        }
+        .best { color: #ffd700; font-weight: bold; }
+        .metric-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 16px;
+            margin-top: 18px;
+        }
+        .metric {
+            background: rgba(0,0,0,0.22);
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 10px;
+            padding: 18px;
+            min-height: 118px;
+        }
+        .metric .num {
+            color: #ffd700;
+            font-size: 30px;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+        .metric .label {
+            color: #dce6f1;
+            font-size: 19px;
+            line-height: 1.4;
+        }
+        .page-num {
+            position: absolute;
+            bottom: 28px;
+            right: 38px;
+            font-size: 16px;
+            color: #738094;
+        }
+        .hint {
+            position: absolute;
+            bottom: 28px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 14px;
+            color: #718093;
+        }
+    </style>
+</head>
+<body>
+
+<!-- Slide 1 -->
+<div class="slide title-slide active">
+    <h1>基于 AST 鲁棒增强的<br>垃圾文本分类系统</h1>
+    <div class="subtitle">大数据课程项目汇报</div>
+    <div class="info">
+        前期基础：jieba + Word2Vec + MLP / TextCNN / BiLSTM<br>
+        本次增强：AST 对抗样本训练、鲁棒评估、置信度搜索攻击、图形化测试平台
+    </div>
+    <div class="hint">按 → 或 ↓ 键翻页 | 按 F11 全屏</div>
+</div>
+
+<!-- Slide 2 -->
+<div class="slide content-slide">
+    <h2>01 从前期汇报到本次增强</h2>
+    <div class="body">
+        <div class="two-col">
+            <div class="col">
+                <h3>前期已汇报基础</h3>
+                <ul>
+                    <li>完成垃圾文本分类主流程：分词、词向量、分类模型、指标对比。</li>
+                    <li>模型侧覆盖 MLP、TextCNN、BiLSTM，解决 spam / normal 判别问题。</li>
+                    <li>前期重点主要是 clean test 上的分类精度。</li>
+                </ul>
+            </div>
+            <div class="col">
+                <h3>本次按反馈补充</h3>
+                <ul>
+                    <li>添加 AST：构建 mild / strong 两级对抗样本并参与训练与测试。</li>
+                    <li>增加演示系统：提供单条预测、模型对比、AST 候选和指标查看。</li>
+                    <li>优化创新点：从模型结构优化升级为鲁棒性、安全评估和工程闭环。</li>
+                </ul>
+            </div>
+        </div>
+        <div class="box">
+            <strong>项目定位：</strong>不是推翻旧版项目，而是在原有垃圾文本分类系统上补齐 AST 对抗训练、强扰动测试、置信度搜索攻击和图形化演示系统。
+        </div>
+    </div>
+    <div class="page-num">2 / 10</div>
+</div>
+
+<!-- Slide 3 -->
+<div class="slide content-slide">
+    <h2>02 系统整体架构</h2>
+    <div class="body diagram-body">
+        <div class="diagram-wrap">
+            <img class="architecture-diagram" src="assets/system_architecture.svg" alt="AST鲁棒垃圾短信检测系统流程图">
+        </div>
+        <div class="box diagram-caption">
+            <strong>框架说明：</strong>主链路从 canonical JSONL、split 内 AST 生成、四组训练矩阵，到 clean / AST / confidence-search 评估和图形化测试平台；虚线反馈表示后续可扩展的逃逸样本复审与主动学习闭环。
+        </div>
+    </div>
+    <div class="page-num">3 / 10</div>
+</div>
+
+<!-- Slide 4 -->
+<div class="slide content-slide">
+    <h2>03 数据集与防泄漏协议</h2>
+    <div class="body">
+        <div class="two-col">
+            <div class="col">
+                <h3>数据来源</h3>
+                <ul>
+                    <li>TensorLayer text-antispam：18,782 条</li>
+                    <li>SpamMessagesLR：10,929 条</li>
+                    <li>FBS_SMS_Dataset：14,074 条 spam-only</li>
+                    <li>UCI SMS：英文外部测试集</li>
+                </ul>
+            </div>
+            <div class="col">
+                <h3>构建协议</h3>
+                <ul>
+                    <li>先去重：保留 39,562 条 clean 样本</li>
+                    <li>先分层切分 train / val / test</li>
+                    <li>只在各 split 内生成 AST</li>
+                    <li>避免同源变体泄漏到测试集</li>
+                </ul>
+            </div>
+        </div>
+        <div class="metric-grid">
+            <div class="metric"><div class="num">27,693</div><div class="label">clean train</div></div>
+            <div class="metric"><div class="num">13,196</div><div class="label">mild AST test</div></div>
+            <div class="metric"><div class="num">23,808</div><div class="label">strong AST test</div></div>
+        </div>
+    </div>
+    <div class="page-num">4 / 10</div>
+</div>
+
+<!-- Slide 5 -->
+<div class="slide content-slide">
+    <h2>04 AST 对抗样本设计</h2>
+    <div class="body">
+        <div class="two-col">
+            <div class="col">
+                <h3>mild AST</h3>
+                <ul>
+                    <li>符号插入、轻度拆分</li>
+                    <li>同音/近形替换</li>
+                    <li>繁简变体</li>
+                    <li>金额、链接轻度规避</li>
+                </ul>
+            </div>
+            <div class="col">
+                <h3>strong AST</h3>
+                <ul>
+                    <li>语义级改写 semantic_rewrite</li>
+                    <li>拼音/首字母缩写 pinyin_abbreviation</li>
+                    <li>联系方式拆分 contact_split</li>
+                    <li>多策略组合 strong_mixed</li>
+                </ul>
+            </div>
+        </div>
+        <div class="box">
+            <strong>策略：</strong>spam 样本允许更强扰动；normal 样本只做保守扰动，避免把正常短信改写成垃圾短信。
+        </div>
+    </div>
+    <div class="page-num">5 / 10</div>
+</div>
+
+<!-- Slide 6 -->
+<div class="slide content-slide">
+    <h2>05 基础模型承接与 AST 训练矩阵</h2>
+    <div class="body">
+        <div class="two-col">
+            <div class="col">
+                <h3>承接的基础分类器</h3>
+                <ul>
+                    <li>MLP：词向量平均池化，速度快</li>
+                    <li>TextCNN：2/3/4/5-gram 卷积核</li>
+                    <li>BiLSTM：双向上下文序列建模</li>
+                </ul>
+            </div>
+            <div class="col">
+                <h3>四组实验模式</h3>
+                <ul>
+                    <li>baseline：只用 clean train</li>
+                    <li>text_ast：clean + AST 文本训练</li>
+                    <li>embedding_fgm：embedding 级 FGM</li>
+                    <li>text_ast_fgm：文本 AST + FGM 组合</li>
+                </ul>
+            </div>
+        </div>
+        <div class="code-block">vector_size=200, max_vocab=50000, max_len=64
+w2v_epochs=20, clf_epochs=10, batch_size=512</div>
+        <div class="box bridge-box">
+            <strong>承接关系：</strong>旧版模型部分作为 baseline 体系保留；本次重点把评价从单一 clean accuracy 扩展到 clean / AST / UCI / 跨扰动泛化。
+        </div>
+    </div>
+    <div class="page-num">6 / 10</div>
+</div>
+
+<!-- Slide 7 -->
+<div class="slide content-slide">
+    <h2>06 mild AST 实验结果</h2>
+    <div class="body">
+        <table>
+            <tr>
+                <th>模型组</th>
+                <th>Clean Acc</th>
+                <th>AST Acc</th>
+                <th>Robust Drop</th>
+                <th>UCI Acc</th>
+            </tr>
+            <tr>
+                <td>baseline / cnn</td>
+                <td>0.9736</td>
+                <td>0.9557</td>
+                <td>0.0178</td>
+                <td>0.8746</td>
+            </tr>
+            <tr>
+                <td>text_ast / cnn</td>
+                <td>0.9702</td>
+                <td>0.9681</td>
+                <td>0.0021</td>
+                <td>0.9150</td>
+            </tr>
+            <tr class="best">
+                <td>text_ast_fgm / cnn</td>
+                <td>0.9770</td>
+                <td>0.9731</td>
+                <td>0.0039</td>
+                <td>0.9151</td>
+            </tr>
+            <tr>
+                <td>text_ast_fgm / rnn</td>
+                <td>0.9745</td>
+                <td>0.9726</td>
+                <td class="best">0.0018</td>
+                <td class="best">0.9324</td>
+            </tr>
+        </table>
+        <div class="box">
+            <strong>结论：</strong>mild AST 下，文本级 AST 与 FGM 组合后，AST Acc 最高达到 <span class="highlight">0.9731</span>，明显优于 baseline/cnn 的 0.9557。
+        </div>
+    </div>
+    <div class="page-num">7 / 10</div>
+</div>
+
+<!-- Slide 8 -->
+<div class="slide content-slide">
+    <h2>07 strong AST 与跨扰动测试</h2>
+    <div class="body">
+        <table>
+            <tr>
+                <th>评估项</th>
+                <th>最佳模型</th>
+                <th>Accuracy</th>
+                <th>Spam Recall</th>
+            </tr>
+            <tr class="best">
+                <td>strong AST 原生测试</td>
+                <td>text_ast_fgm / cnn</td>
+                <td>0.9824</td>
+                <td>0.9828</td>
+            </tr>
+            <tr>
+                <td>strong UCI 外部测试</td>
+                <td>text_ast_fgm / rnn</td>
+                <td>0.9616</td>
+                <td>-</td>
+            </tr>
+            <tr>
+                <td>mild 训练 → strong AST</td>
+                <td>text_ast / cnn</td>
+                <td>0.9406</td>
+                <td>0.9390</td>
+            </tr>
+            <tr>
+                <td>strong 训练 → mild AST</td>
+                <td>embedding_fgm / rnn</td>
+                <td>0.9666</td>
+                <td>0.9733</td>
+            </tr>
+        </table>
+        <div class="box">
+            <strong>发现：</strong>strong AST 训练显著提升强规避样本鲁棒性，但跨回 mild AST 时不同模型表现分化，说明扰动强度会带来分布偏移。
+        </div>
+    </div>
+    <div class="page-num">8 / 10</div>
+</div>
+
+<!-- Slide 9 -->
+<div class="slide content-slide">
+    <h2>08 置信度搜索攻击与图形化测试平台</h2>
+    <div class="body">
+        <div class="two-col">
+            <div class="col">
+                <h3>模型置信度搜索攻击</h3>
+                <ul>
+                    <li>为每条 clean spam 生成多个 AST 候选</li>
+                    <li>选择 normal 类置信度最高的候选</li>
+                    <li>mild：246 / 5297，ASR = 0.0464</li>
+                    <li>strong：364 / 5308，ASR = 0.0686</li>
+                </ul>
+            </div>
+            <div class="col">
+                <h3>图形化演示平台</h3>
+                <ul>
+                    <li>单条文本 spam / normal 预测</li>
+                    <li>12 个模型横向对比</li>
+                    <li>AST 扰动候选生成</li>
+                    <li>Clean / AST / UCI 指标查看</li>
+                </ul>
+            </div>
+        </div>
+        <div class="code-block">.venv_submit/bin/python scripts/serve_submission_ui.py \
+  --output-dir output/submission_full_20260706_full \
+  --host 127.0.0.1 --port 7860</div>
+    </div>
+    <div class="page-num">9 / 10</div>
+</div>
+
+<!-- Slide 10 -->
+<div class="slide content-slide">
+    <h2>09 创新点升级与总结</h2>
+    <div class="body">
+        <ul>
+            <li><strong>创新点 ① 数据协议：</strong>先去重、先切分、split 内生成 AST，避免 clean 与对抗变体泄漏。</li>
+            <li><strong>创新点 ② 鲁棒训练：</strong>在 baseline 外补充 text_ast、embedding_fgm、text_ast_fgm 三组增强模式。</li>
+            <li><strong>创新点 ③ 评估升级：</strong>同时报告 clean test、mild / strong AST、UCI 外测、跨扰动测试和攻击成功率。</li>
+            <li><strong>创新点 ④ 演示闭环：</strong>图形化平台支持预测、模型对比、AST 候选搜索和指标查看。</li>
+            <li><strong>与旧版关系：</strong>旧版强调基础模型优化，本次在同一垃圾文本检测任务上补齐对抗鲁棒性与可展示能力。</li>
+        </ul>
+        <div class="box">
+            <strong>后续方向：</strong>更强黑盒搜索、语义一致性过滤、主动学习闭环和模型校准。
+        </div>
+        <div style="margin-top: 24px; text-align: center; font-size: 32px; color: #00d4ff;">
+            感谢聆听，欢迎提问！
+        </div>
+    </div>
+    <div class="page-num">10 / 10</div>
+</div>
+
+<script>
+    const slides = document.querySelectorAll('.slide');
+    let current = 0;
+
+    function showSlide(index) {
+        slides.forEach(s => s.classList.remove('active'));
+        if (index >= 0 && index < slides.length) {
+            slides[index].classList.add('active');
+            current = index;
+        }
+    }
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ') {
+            e.preventDefault();
+            if (current < slides.length - 1) showSlide(current + 1);
+        } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+            e.preventDefault();
+            if (current > 0) showSlide(current - 1);
+        } else if (e.key === 'Home') {
+            showSlide(0);
+        } else if (e.key === 'End') {
+            showSlide(slides.length - 1);
+        }
+    });
+
+    document.addEventListener('click', () => {
+        if (current < slides.length - 1) showSlide(current + 1);
+    });
+</script>
+</body>
+</html>

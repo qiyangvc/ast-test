@@ -1,8 +1,7 @@
 """Inference helpers for the AST submission models.
 
 This module serves the PyTorch models produced by ``scripts/submission_pipeline.py``.
-It intentionally avoids the legacy TensorFlow serving code because the final
-submission artifacts are PyTorch ``.pt`` checkpoints plus JSON vocab files.
+Final submission artifacts are PyTorch ``.pt`` checkpoints plus JSON vocab files.
 """
 from __future__ import annotations
 

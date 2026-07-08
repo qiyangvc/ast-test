@@ -1,130 +1,59 @@
-import os
-from typing import Dict, Any
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
 
 class Config:
-    """项目配置类"""
-    
-    # 项目根目录
-    BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    
-    # 数据目录
-    DATA_DIR = os.path.join(BASE_DIR, 'data')
-    MSG_LOG_DIR = os.path.join(DATA_DIR, 'msglog')
-    
-    # 输出目录
-    OUTPUT_DIR = os.path.join(BASE_DIR, 'output')
-    WEIGHTS_DIR = os.path.join(BASE_DIR, 'weights')
-    LOGS_DIR = os.path.join(BASE_DIR, 'logs')
-    
-    # Word2Vec 配置
-    WORD2VEC_CONFIG = {
-        'min_freq': 5,
-        'batch_size': 128,
-        'embedding_size': 200,
-        'skip_window': 2,
-        'num_skips': 4,
-        'num_sampled': 64,
-        'learning_rate': 0.001,
-        'n_epoch': 5,
-        'print_freq': 100,
-        'model_name': 'model_word2vec_200'
-    }
-    
-    # 分类器通用配置
-    CLASSIFIER_CONFIG = {
-        'test_size': 0.2,
-        'batch_size': 4,
-        'display_step': 1
-    }
-    
-    # RNN分类器配置
-    RNN_CONFIG = {
-        'learning_rate': 0.001,
-        'n_epoch': 5,
-        'lstm_units': 32,
-        'recurrent_dropout': 0.2
-    }
-    
-    # MLP分类器配置
-    MLP_CONFIG = {
-        'learning_rate': 0.01,
-        'n_epoch': 5,
-        'hidden_units': 50,
-        'dropout_keep': 0.5
-    }
-    
-    # CNN分类器配置
-    CNN_CONFIG = {
-        'learning_rate': 0.005,
-        'n_epoch': 5,
-        'max_seq_len': 10,
-        'n_filter': 4,
-        'filter_size': 3,
-        'stride': 1,
-        'pool_size': 2,
-        'pool_strides': 1,
-        'dropout_keep': 0.5
-    }
+    """Shared paths and experiment defaults for the AST spam-text project."""
 
-    # AST数据集构建配置
+    BASE_DIR = Path(__file__).resolve().parents[1]
+    DATA_DIR = BASE_DIR / "data"
+    OUTPUT_DIR = BASE_DIR / "output"
+
+    EXTERNAL_DIR = DATA_DIR / "external"
+    MSG_LOG_DIR = EXTERNAL_DIR / "raw" / "tensorlayer_text_antispam" / "msglog"
+
     AST_DATASET_CONFIG = {
-        'train_ratio': 0.7,
-        'val_ratio': 0.1,
-        'test_ratio': 0.2,
-        'seed': 42,
-        'max_variants_spam': 2,
-        'max_variants_normal': 1,
-        'ast_strength': 'mild',
-        'output_dir_name': 'ast_experiment'
+        "train_ratio": 0.7,
+        "val_ratio": 0.1,
+        "test_ratio": 0.2,
+        "seed": 42,
+        "max_variants_spam": 2,
+        "max_variants_normal": 1,
+        "ast_strength": "mild",
+        "output_dir_name": "ast_experiment",
     }
 
-    # 较强扰动AST实验配置：单独产出，不覆盖已有mild AST结果
     STRONG_AST_DATASET_CONFIG = {
-        'train_ratio': 0.7,
-        'val_ratio': 0.1,
-        'test_ratio': 0.2,
-        'seed': 42,
-        'max_variants_spam': 4,
-        'max_variants_normal': 1,
-        'ast_strength': 'strong',
-        'output_dir_name': 'ast_experiment_strong'
+        "train_ratio": 0.7,
+        "val_ratio": 0.1,
+        "test_ratio": 0.2,
+        "seed": 42,
+        "max_variants_spam": 4,
+        "max_variants_normal": 1,
+        "ast_strength": "strong",
+        "output_dir_name": "ast_experiment_strong",
     }
 
-    # Embedding级对抗训练配置
-    AST_TRAINING_CONFIG = {
-        'method': 'fgm',
-        'epsilon': 0.5,
-        'alpha': 0.5,
-        'pgd_steps': 3,
-        'pgd_step_size': 0.2,
-        'random_start': True,
-        'grad_norm': 'l2'
+    SUBMISSION_TRAINING_CONFIG = {
+        "modes": ["baseline", "text_ast", "embedding_fgm", "text_ast_fgm"],
+        "models": ["mlp", "cnn", "rnn"],
+        "vector_size": 200,
+        "max_vocab": 50000,
+        "max_len": 64,
+        "w2v_epochs": 20,
+        "clf_epochs": 10,
+        "batch_size": 512,
+        "fgm_epsilon": 0.5,
+        "learning_rate": 1e-3,
     }
 
-    # AST实验配置：默认先dry-run，必须显式execute才训练/评估
-    AST_EXPERIMENT_CONFIG = {
-        'modes': ['baseline', 'text_ast', 'embedding_fgm', 'text_ast_fgm'],
-        'models': ['rnn', 'mlp', 'cnn'],
-        'default_mode': 'baseline',
-        'default_models': ['rnn', 'cnn'],
-        'dry_run_default': True
-    }
-    
     @classmethod
     def get(cls, key: str) -> Any:
-        """获取配置值"""
         return getattr(cls, key, None)
-    
+
     @classmethod
-    def ensure_dirs(cls):
-        """确保所有必要目录存在"""
-        dirs = [
-            cls.DATA_DIR,
-            cls.MSG_LOG_DIR,
-            cls.OUTPUT_DIR,
-            cls.WEIGHTS_DIR,
-            cls.LOGS_DIR
-        ]
-        for dir_path in dirs:
-            if not os.path.exists(dir_path):
-                os.makedirs(dir_path)
+    def ensure_dirs(cls) -> None:
+        for path in (cls.DATA_DIR, cls.OUTPUT_DIR, cls.EXTERNAL_DIR):
+            Path(path).mkdir(parents=True, exist_ok=True)

@@ -1,10 +1,106 @@
-# 文本检测实践提交版报告
+# AST 鲁棒垃圾短信检测项目报告
+
+## 项目定位
+
+本项目已整理为独立的 AST 鲁棒文本检测作业项目。当前仓库只保留数据准备、AST 构建、PyTorch 训练评估、置信度搜索攻击、跨扰动测试和图形化演示相关代码。
+
+项目核心问题是：垃圾短信模型在面对规避式改写时是否仍能稳定识别 spam，而不是只在 clean test 上取得高准确率。
 
 ## 完成范围
 
-本次补齐了从数据准备、Word2Vec 训练、MLP/CNN/RNN 分类训练、clean test、AST test、外部 UCI 英文测试、模型指标汇总、AST 样本质量检查，到基于模型置信度搜索攻击的完整流程。
+已完成：
 
-完整运行命令：
+- 外部数据下载与 canonical JSONL 标准化。
+- clean 数据去重、冲突标签剔除、分层切分。
+- mild AST 与 strong AST 数据构建。
+- Word2Vec 真实训练。
+- MLP、TextCNN、BiLSTM 三类模型真实训练。
+- `baseline`、`text_ast`、`embedding_fgm`、`text_ast_fgm` 四组实验。
+- clean test、AST test、UCI 英文外部测试。
+- 按攻击类型统计 AST 指标。
+- 基于模型置信度搜索的攻击评估。
+- mild/strong 双向跨扰动评估。
+- AST 自动质量检查。
+- 本地图形化测试界面。
+
+## 数据集
+
+中文训练与测试数据：
+
+```text
+TensorLayer text-antispam: 18,782 条，normal 9,801，spam 8,981
+SpamMessagesLR:            10,929 条，normal 3,939，spam 6,990
+FBS_SMS_Dataset:           14,074 条，spam-only
+```
+
+外部测试：
+
+```text
+UCI SMS Spam Collection: 英文 spam/ham 测试集
+```
+
+Hugging Face gated 数据集：
+
+```text
+paulkm/chinese_conversation_and_spam: GatedRepoError
+reatiny/chinese-spam-10000: GatedRepoError
+```
+
+当前环境没有授权 token，因此 gated 数据没有纳入训练；失败原因已写入输出目录的 `external_access/huggingface_gated_attempts.json`。
+
+## 数据构建协议
+
+AST 数据构建遵守：
+
+```text
+clean 原始数据
+  -> 去重和冲突标签剔除
+  -> train/val/test 分层切分
+  -> split 内生成 AST
+  -> train_clean 或 train_clean_ast 训练
+  -> test_clean 与 test_ast 评估
+```
+
+这样避免同源 clean 样本和 AST 变体同时进入训练与测试。
+
+数据规模：
+
+```text
+loaded: 43,785
+kept_after_dedup: 39,562
+dropped_duplicates: 4,218
+dropped_conflicting_labels: 3
+
+clean:
+  train: 27,693
+  val:    3,956
+  test:   7,913
+
+mild AST:
+  train_ast: 46,201
+  val_ast:    6,599
+  test_ast:  13,196
+
+strong AST:
+  train_ast: 83,346
+  val_ast:   11,905
+  test_ast:  23,808
+```
+
+## 训练配置
+
+```text
+Word2Vec: Gensim skip-gram, vector_size=200, epochs=20, negative sampling
+Classifier: PyTorch MLP / TextCNN / BiLSTM
+Modes: baseline / text_ast / embedding_fgm / text_ast_fgm
+Classifier epochs: 10
+Batch size: 512
+Max sequence length: 64
+Max vocabulary: 50,000
+FGM epsilon: 0.5
+```
+
+完整命令：
 
 ```bash
 .venv_submit/bin/python scripts/submission_pipeline.py \
@@ -19,41 +115,15 @@
   --review-sample-size 0
 ```
 
-其中 `--confidence-attack-limit 0` 表示对 clean spam 测试集做完整置信度搜索攻击，`--review-sample-size 0` 表示对 AST 测试集做完整自动质量检查。本次流水线耗时约 123.31 分钟，完整本地产物位于 `output/submission_full_20260706_full/`，目录大小约 505M。`output/` 和 `data/` 被 `.gitignore` 忽略，提交作业时需要额外打包该输出目录或抽取其中报告、指标和关键样例。
+strong AST 完整命令：
 
-## 数据集
-
-- 中文主数据：TensorLayer text-antispam、SpamMessagesLR、FBS_SMS_Dataset。
-- 英文外部测试：UCI SMS Spam Collection，已下载并转为 canonical JSONL。
-- Hugging Face gated 数据：已通过脚本尝试访问 `paulkm/chinese_conversation_and_spam` 和 `reatiny/chinese-spam-10000`，当前环境未提供有权限的 HF 登录/token，因此返回 `GatedRepoError`。失败原因已记录到 `output/submission_full_20260706_full/external_access/huggingface_gated_attempts.json`。
-
-AST 数据构建采用先去重、再分层切分、最后在 split 内生成对抗变体，避免同源变体泄漏到测试集。
-
-数据规模：
-
-```text
-loaded: 43,785
-kept_after_dedup: 39,562
-
-train_clean: spam 18,578，normal 9,115
-val_clean:   spam 2,654，normal 1,302
-test_clean:  spam 5,308，normal 2,605
-
-train_ast: spam 37,092，normal 9,109
-val_ast:   spam 5,297，normal 1,302
-test_ast:  spam 10,593，normal 2,603
+```bash
+.venv_submit/bin/python scripts/run_strong_ast_experiment.py \
+  --dataset-dir data/ast_experiment_strong \
+  --output-dir output/submission_strong_ast_20260706_full
 ```
 
-## 训练配置
-
-- Word2Vec：Gensim skip-gram，`vector_size=200`，`epochs=20`，negative sampling。
-- 分类器：PyTorch MLP、TextCNN、BiLSTM。
-- 实验模式：`baseline`、`text_ast`、`embedding_fgm`、`text_ast_fgm`。
-- 分类器训练：每个模型 `10` epoch，`batch_size=512`，`max_len=64`，`max_vocab=50000`。
-
-说明：原项目 TensorFlow/TensorLayer 版本与当前 Python 3.12 环境不兼容，因此提交流水线使用 PyTorch 复现实训目标并保留真实训练、真实测试和可复现实验指标。
-
-## 指标摘要
+## Mild AST 结果
 
 | Mode | Model | Clean Acc | Clean Spam Recall | AST Acc | AST Spam Recall | Robust Drop | UCI Acc |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -72,85 +142,99 @@ test_ast:  spam 10,593，normal 2,603
 
 结论：
 
-- 最佳 AST 准确率为 `text_ast_fgm/cnn` 的 `0.9731`。
-- `text_ast_fgm/cnn` 相比 `baseline/cnn`，AST 准确率从 `0.9557` 提升到 `0.9731`，Robust Drop 从 `0.0178` 降到 `0.0039`。
+- mild AST 最佳 AST Acc 为 `text_ast_fgm/cnn = 0.9731`。
+- `text_ast_fgm/cnn` 相比 `baseline/cnn`，AST Acc 从 `0.9557` 提升到 `0.9731`。
 - 最低 Robust Drop 为 `text_ast/rnn` 和 `text_ast_fgm/rnn`，均为 `0.0018`。
-- 最佳英文 UCI 外部测试结果为 `text_ast_fgm/rnn`，准确率 `0.9324`。
+- UCI 英文外部测试最佳为 `text_ast_fgm/rnn = 0.9324`。
 
-## 较强扰动 AST 扩展组
+## Strong AST 结果
 
-当前主表格对应 `ast_strength=mild` 的训练结果。为增强实验完整性，已新增并完整跑通 `ast_strength=strong` 的独立数据构建、训练和评估组：
+| Mode | Model | Clean Acc | Strong AST Acc | Robust Drop | Strong AST Spam Recall | UCI Acc |
+|---|---|---:|---:|---:|---:|---:|
+| baseline | mlp | 0.9612 | 0.8467 | 0.1145 | 0.8439 | 0.9055 |
+| baseline | cnn | 0.9736 | 0.8720 | 0.1016 | 0.8736 | 0.8988 |
+| baseline | rnn | 0.9709 | 0.8413 | 0.1296 | 0.8320 | 0.9116 |
+| text_ast | mlp | 0.9532 | 0.9715 | -0.0182 | 0.9724 | 0.9142 |
+| text_ast | cnn | 0.9656 | 0.9811 | -0.0154 | 0.9833 | 0.8970 |
+| text_ast | rnn | 0.9636 | 0.9800 | -0.0164 | 0.9823 | 0.9453 |
+| embedding_fgm | mlp | 0.9661 | 0.8764 | 0.0897 | 0.8793 | 0.8950 |
+| embedding_fgm | cnn | 0.9791 | 0.8701 | 0.1090 | 0.8708 | 0.8986 |
+| embedding_fgm | rnn | 0.9766 | 0.8000 | 0.1766 | 0.7842 | 0.9087 |
+| text_ast_fgm | mlp | 0.9583 | 0.9742 | -0.0159 | 0.9743 | 0.9221 |
+| text_ast_fgm | cnn | 0.9711 | 0.9824 | -0.0113 | 0.9828 | 0.9232 |
+| text_ast_fgm | rnn | 0.9687 | 0.9802 | -0.0116 | 0.9799 | 0.9616 |
 
-```bash
-.venv_submit/bin/python scripts/run_strong_ast_experiment.py \
-  --dataset-dir data/ast_experiment_strong \
-  --output-dir output/submission_strong_ast_20260706_full
-```
+结论：
 
-strong 组采用 `max_variants_spam=4`、`max_variants_normal=1`，在 spam 样本上增加语义改写、多关键词混淆、拼音/首字母缩写、联系方式拆分、URL/金额规避和强组合扰动。已构建的 strong AST 测试集规模为 `23,808` 条，其中 spam `21,205` 条、normal `2,603` 条。
+- strong AST 原生测试最佳为 `text_ast_fgm/cnn = 0.9824`。
+- strong AST spam recall 最佳为 `text_ast/cnn = 0.9833`。
+- UCI 英文外部测试最佳为 `text_ast_fgm/rnn = 0.9616`。
+- 仅 embedding FGM 在 strong AST 上效果较弱，说明文本级 AST 训练是主要增益来源。
 
-strong 组完整训练耗时约 `155.91` 分钟，输出目录为 `output/submission_strong_ast_20260706_full/`。关键结果如下：
+## 跨扰动评估
 
-- strong AST 原生测试最佳：`text_ast_fgm/cnn`，AST Acc `0.9824`，AST Spam Recall `0.9828`。
-- strong 组英文 UCI 外部测试最佳：`text_ast_fgm/rnn`，UCI Acc `0.9616`。
-- strong 组基于模型置信度搜索攻击：目标 `text_ast_fgm/cnn`，搜索 `5308` 条 clean spam，成功 `364` 条，攻击成功率 `0.0686`。
-- strong AST 自动质量检查：`23808` 条，`23807` 条通过，`1` 条需复核，通过率 `0.99996`。
+| Eval | Best Model | Acc | Spam Recall | 结果文件 |
+|---|---|---:|---:|---|
+| mild 训练模型 -> strong AST | text_ast/cnn | 0.9406 | 0.9390 | `output/submission_full_20260706_full/metrics/mild_on_strong_test_ast.json` |
+| strong 训练模型 -> mild AST | embedding_fgm/rnn | 0.9666 | 0.9733 | `output/submission_strong_ast_20260706_full/metrics/strong_on_mild_test_ast.json` |
 
-已完成两项跨扰动评估：
-
-```bash
-.venv_submit/bin/python scripts/evaluate_ast_cross.py \
-  --output-dir output/submission_full_20260706_full \
-  --dataset-dir data/ast_experiment_strong \
-  --name mild_on_strong
-
- .venv_submit/bin/python scripts/evaluate_ast_cross.py \
-  --output-dir output/submission_strong_ast_20260706_full \
-  --dataset-dir data/ast_experiment \
-  --name strong_on_mild
-```
-
-跨扰动结果：
-
-- mild 训练模型 -> strong AST：最佳 `text_ast/cnn`，Acc `0.9406`，Spam Recall `0.9390`；原 `text_ast_fgm/cnn` 在 strong AST 上 Acc `0.8999`。
-- strong 训练模型 -> mild AST：最佳 `embedding_fgm/rnn`，Acc `0.9666`，Spam Recall `0.9733`；`text_ast_fgm/rnn` Acc `0.9629`。
-
-结论：strong AST 组显著提高了对更强文本规避写法的原生鲁棒性，但跨回 mild AST 时并非所有模型都优于 mild 训练组，说明强扰动会引入一定分布偏移；报告中应同时呈现 mild、strong 和 cross-AST 三组指标。
+补充观察：原 mild 训练的 `text_ast_fgm/cnn` 在 strong AST 上 Acc 为 `0.8999`，而 strong 训练的 `text_ast_fgm/cnn` 在 strong AST 原生测试上 Acc 为 `0.9824`。这说明新增 strong AST 训练显著提升了对强规避写法的适应能力，但强扰动也会带来分布偏移，因此报告中保留 mild、strong、cross 三类结果更完整。
 
 ## 置信度搜索攻击
 
-- 攻击目标模型：`text_ast_fgm/cnn`
-- clean spam 测试样本数：`5308`
-- 实际搜索样本数：`5297`
-- 成功数：`246`
-- 攻击成功率：`0.0464`
-- 输出文件：`output/submission_full_20260706_full/attacks/confidence_search_text_ast_fgm_cnn.jsonl`
+mild 组：
 
-该攻击不是只随机生成一个 AST 样本，而是为每条 spam 样本生成候选扰动，并选择模型 normal 类置信度最高的候选，属于基于模型置信度搜索的文本攻击。
+```text
+目标模型: text_ast_fgm/cnn
+搜索样本: 5297
+成功数: 246
+ASR: 0.0464
+```
 
-## AST 样本质量检查
+strong 组：
 
-- 检查样本数：`13196`
-- 通过数：`13195`
-- 需要复核：`1`
-- 通过率：`0.9999`
-- 输出文件：`output/submission_full_20260706_full/review/ast_quality_review.jsonl`
+```text
+目标模型: text_ast_fgm/cnn
+搜索样本: 5308
+成功数: 364
+ASR: 0.0686
+```
 
-限制说明：该文件是 Codex-assisted 自动质量检查，不等同于学生本人或第三方真实人审签名。如果课程严格要求人审，需要学生再打开该 JSONL 对样本进行确认。
+攻击过程为每条 clean spam 生成多个 AST 候选，并选择模型 normal 类置信度最高的候选，因此属于基于模型置信度的搜索攻击。
 
-## 关键产物
+## AST 质量检查
 
-- 自动生成报告：`output/submission_full_20260706_full/SUBMISSION_REPORT.md`
-- Word2Vec：`output/submission_full_20260706_full/word2vec/`
-- 模型权重：`output/submission_full_20260706_full/models/`
-- 全量指标：`output/submission_full_20260706_full/metrics/all_results.json`
-- 单模型指标：`output/submission_full_20260706_full/metrics/<mode>/<model>.json`
-- 置信度攻击：`output/submission_full_20260706_full/attacks/`
-- AST 质检：`output/submission_full_20260706_full/review/`
+```text
+mild AST:   13,196 条，13,195 条通过，1 条需复核，通过率 0.9999
+strong AST: 23,808 条，23,807 条通过，1 条需复核，通过率 0.99996
+```
+
+限制说明：该检查是程序辅助质检，不等同于学生本人或第三方人工签名审核。如果课程要求人审，需要学生打开 `review/ast_quality_review.jsonl` 进行最终确认。
+
+## 产物
+
+```text
+output/submission_full_20260706_full/
+  SUBMISSION_REPORT.md
+  metrics/all_results.json
+  models/
+  word2vec/
+  attacks/
+  review/
+
+output/submission_strong_ast_20260706_full/
+  SUBMISSION_REPORT.md
+  metrics/all_results.json
+  metrics/strong_on_mild_test_ast.json
+  models/
+  word2vec/
+  attacks/
+  review/
+```
+
+`data/` 和 `output/` 被 `.gitignore` 忽略，提交作业时如需附带训练产物，需要额外打包。
 
 ## 图形化测试程序
-
-本项目新增了一个浏览器图形界面，入口为：
 
 ```bash
 .venv_submit/bin/python scripts/serve_submission_ui.py \
@@ -159,15 +243,14 @@ strong 组完整训练耗时约 `155.91` 分钟，输出目录为 `output/submis
   --port 7860
 ```
 
-打开 `http://127.0.0.1:7860` 后，可以进行：
+浏览器打开 `http://127.0.0.1:7860` 后，可以进行单条文本预测、置信度展示、AST 候选搜索、12 个模型横向对比和完整指标查看。
 
-```text
-单条文本 spam/normal 预测
-spam 与 normal 置信度展示
-分词、未知词和截断信息查看
-AST 扰动候选生成与模型置信度搜索
-12 个模型横向对比
-完整 Clean / AST / UCI 指标表查看
-```
+## 可进一步创新但本轮未修改
 
-该测试程序使用 `output/submission_full_20260706_full/` 中的真实 PyTorch 权重、vocab 和指标文件，不需要重新训练。
+为避免破坏当前已完成实验的可复现性，以下方向只作为报告未来工作，不在本轮改代码：
+
+- 更强黑盒搜索：beam search、遗传算法或贝叶斯优化替代当前候选枚举。
+- 语义一致性约束：加入句向量相似度或 NLI 过滤，减少 AST 语义漂移。
+- 主动学习闭环：将置信度搜索成功的逃逸样本送入复审和二次训练。
+- 模型校准：增加 ECE、Brier Score 和阈值曲线，服务真实业务阈值选择。
+- 多语言/混写鲁棒性：将拼音、英文 spam、中英混写、符号规避统一纳入评估。

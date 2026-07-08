@@ -1,9 +1,8 @@
 #!/usr/bin/env python
 """End-to-end submission pipeline for AST spam-text experiments.
 
-This script is intentionally independent from the legacy TensorFlow 2.2 code so
-it can run on the current Python 3.12 environment. It trains real Word2Vec
-embeddings with Gensim and real MLP/CNN/RNN classifiers with PyTorch.
+This script runs the complete Python 3.12 submission workflow. It trains real
+Word2Vec embeddings with Gensim and real MLP/CNN/RNN classifiers with PyTorch.
 """
 from __future__ import annotations
 

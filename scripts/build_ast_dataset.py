@@ -42,7 +42,7 @@ def main() -> None:
     parser.add_argument(
         "--output-dir",
         default=str(Path(Config.DATA_DIR) / cfg["output_dir_name"]),
-        help="Output directory for canonical JSONL, legacy msglog folders, and manifest.",
+        help="Output directory for canonical JSONL, msglog text exports, and manifest.",
     )
     parser.add_argument("--train-ratio", type=float, default=cfg["train_ratio"])
     parser.add_argument("--val-ratio", type=float, default=cfg["val_ratio"])

@@ -6,7 +6,7 @@ This module enforces the experiment protocol used for adversarial spam text:
 2. deduplicate before splitting;
 3. split clean records by label;
 4. generate adversarial variants inside each split only;
-5. write both metadata-rich JSONL files and legacy ``msg*.log.seg`` folders.
+5. write both metadata-rich JSONL files and plain ``msg*.log.seg`` exports.
 
 The split-before-generation order is important. If variants are generated first
 and then randomly split, near-duplicate texts can leak across train/test and
@@ -319,7 +319,7 @@ def write_jsonl(path: Path, records: Iterable[TextRecord]) -> None:
             handle.write(record.to_json() + "\n")
 
 
-def write_legacy_msglog(path: Path, records: Iterable[TextRecord]) -> None:
+def write_msglog_export(path: Path, records: Iterable[TextRecord]) -> None:
     path.mkdir(parents=True, exist_ok=True)
     grouped: Dict[str, List[TextRecord]] = defaultdict(list)
     for record in records:
@@ -391,7 +391,7 @@ def build_ast_dataset(
     )
 
     canonical_dir = output_dir / "canonical"
-    legacy_dir = output_dir / "legacy"
+    msglog_dir = output_dir / "msglog"
 
     for split, clean_records in splits.items():
         ast_records = ast_splits[split]
@@ -401,9 +401,9 @@ def build_ast_dataset(
         write_jsonl(canonical_dir / f"{split}_ast.jsonl", ast_records)
         write_jsonl(canonical_dir / f"{split}_clean_ast.jsonl", clean_ast_records)
 
-        write_legacy_msglog(legacy_dir / f"{split}_clean", clean_records)
-        write_legacy_msglog(legacy_dir / f"{split}_ast", ast_records)
-        write_legacy_msglog(legacy_dir / f"{split}_clean_ast", clean_ast_records)
+        write_msglog_export(msglog_dir / f"{split}_clean", clean_records)
+        write_msglog_export(msglog_dir / f"{split}_ast", ast_records)
+        write_msglog_export(msglog_dir / f"{split}_clean_ast", clean_ast_records)
 
         stats.split_counts[split] = count_by_label(clean_records)
         stats.ast_counts[split] = count_by_label(ast_records)

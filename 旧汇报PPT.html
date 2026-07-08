@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>垃圾文本分类系统 - 课程汇报</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body {
+            width: 100%; height: 100%;
+            font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+            background: #1a1a2e;
+            color: #fff;
+            overflow: hidden;
+        }
+        .slide {
+            width: 100%; height: 100%;
+            display: none;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 60px 80px;
+            position: relative;
+        }
+        .slide.active { display: flex; }
+
+        /* 标题页 */
+        .title-slide { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); }
+        .title-slide h1 {
+            font-size: 56px;
+            margin-bottom: 20px;
+            background: linear-gradient(90deg, #00d4ff, #7b2cbf);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .title-slide .subtitle {
+            font-size: 28px;
+            color: #a0a0a0;
+            margin-bottom: 60px;
+        }
+        .title-slide .info {
+            font-size: 20px;
+            color: #888;
+            line-height: 2;
+        }
+
+        /* 内容页通用 */
+        .content-slide { background: linear-gradient(135deg, #16213e 0%, #0f3460 100%); }
+        .content-slide h2 {
+            font-size: 42px;
+            margin-bottom: 40px;
+            color: #00d4ff;
+            align-self: flex-start;
+            border-left: 5px solid #7b2cbf;
+            padding-left: 20px;
+        }
+        .content-slide .body {
+            width: 100%;
+            font-size: 26px;
+            line-height: 1.8;
+            color: #e0e0e0;
+        }
+        .content-slide .body ul {
+            list-style: none;
+            padding-left: 0;
+        }
+        .content-slide .body li {
+            margin-bottom: 16px;
+            padding-left: 30px;
+            position: relative;
+        }
+        .content-slide .body li::before {
+            content: "▸";
+            position: absolute;
+            left: 0;
+            color: #00d4ff;
+            font-weight: bold;
+        }
+        .content-slide .highlight {
+            color: #ffd700;
+            font-weight: bold;
+        }
+        .content-slide .code-block {
+            background: rgba(0,0,0,0.3);
+            border-radius: 10px;
+            padding: 20px 30px;
+            font-family: "Consolas", monospace;
+            font-size: 20px;
+            color: #a8d5ba;
+            margin: 20px 0;
+            border-left: 4px solid #00d4ff;
+        }
+        .content-slide .two-col {
+            display: flex;
+            gap: 50px;
+            width: 100%;
+        }
+        .content-slide .col {
+            flex: 1;
+        }
+        .content-slide .col h3 {
+            font-size: 28px;
+            color: #ffd700;
+            margin-bottom: 20px;
+        }
+
+        /* 表格 */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 24px;
+            margin-top: 20px;
+        }
+        th, td {
+            padding: 16px 24px;
+            text-align: left;
+            border-bottom: 1px solid rgba(255,255,255,0.2);
+        }
+        th {
+            background: rgba(0, 212, 255, 0.15);
+            color: #00d4ff;
+            font-weight: bold;
+        }
+        tr:hover { background: rgba(255,255,255,0.05); }
+        .best { color: #ffd700; font-weight: bold; }
+
+        /* 流程图 */
+        .flow {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 15px;
+            margin: 30px 0;
+            flex-wrap: wrap;
+        }
+        .flow-box {
+            background: linear-gradient(135deg, #7b2cbf, #00d4ff);
+            padding: 15px 25px;
+            border-radius: 12px;
+            font-size: 20px;
+            font-weight: bold;
+            text-align: center;
+            min-width: 140px;
+        }
+        .flow-arrow {
+            font-size: 30px;
+            color: #00d4ff;
+        }
+
+        /* 页码 */
+        .page-num {
+            position: absolute;
+            bottom: 30px;
+            right: 40px;
+            font-size: 16px;
+            color: #666;
+        }
+
+        /* 提示 */
+        .hint {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 14px;
+            color: #555;
+        }
+
+        /* 强调框 */
+        .box {
+            background: rgba(0, 212, 255, 0.1);
+            border: 1px solid rgba(0, 212, 255, 0.3);
+            border-radius: 12px;
+            padding: 25px 30px;
+            margin: 20px 0;
+        }
+        .box strong {
+            color: #00d4ff;
+        }
+    </style>
+</head>
+<body>
+
+<!-- Slide 1: 标题 -->
+<div class="slide title-slide active">
+    <h1>基于深度学习的垃圾文本分类系统</h1>
+    <div class="subtitle">大数据课程项目汇报</div>
+    <div class="info">
+        技术栈：TensorFlow 2.2.0 / Keras / Word2Vec<br>
+        核心模型：BiLSTM-Attention + Focal Loss
+    </div>
+    <div class="hint">按 → 或 ↓ 键翻页 | 按 F11 全屏</div>
+</div>
+
+<!-- Slide 2: 背景 -->
+<div class="slide content-slide">
+    <h2>01 项目背景与问题</h2>
+    <div class="body">
+        <ul>
+            <li>垃圾短信/文本泛滥，传统规则匹配（关键词）<span class="highlight">误报率高、维护困难</span></li>
+            <li>基于深度学习的文本分类成为主流方案，但面临两大挑战：
+                <ul style="margin-top: 10px; padding-left: 30px;">
+                    <li style="font-size: 22px;">❶ <span class="highlight">类别不平衡</span>：正常短信远多于垃圾短信，模型偏向预测多数类</li>
+                    <li style="font-size: 22px;">❷ <span class="highlight">特征提取不足</span>：传统 CNN/RNN 难以捕捉长距离依赖和关键信息</li>
+                </ul>
+            </li>
+            <li>本项目目标：构建一套<span class="highlight">高精度、模块化</span>的垃圾文本分类系统</li>
+        </ul>
+    </div>
+    <div class="page-num">2 / 10</div>
+</div>
+
+<!-- Slide 3: 架构 -->
+<div class="slide content-slide">
+    <h2>02 系统整体架构</h2>
+    <div class="body">
+        <div class="flow">
+            <div class="flow-box">原始语料<br><span style="font-size:14px">jieba分词</span></div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-box">Word2Vec<br><span style="font-size:14px">NCE负采样</span></div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-box">词向量序列<br><span style="font-size:14px">200维</span></div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-box">分类模型<br><span style="font-size:14px">BiLSTM-Attn</span></div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-box">分类结果<br><span style="font-size:14px">spam / normal</span></div>
+        </div>
+        <div class="box">
+            <strong>工程特点：</strong>模块化设计，配置中心统一管理，数据加载 / 特征提取 / 模型训练各模块解耦
+        </div>
+    </div>
+    <div class="page-num">3 / 10</div>
+</div>
+
+<!-- Slide 4: Word2Vec -->
+<div class="slide content-slide">
+    <h2>03 词向量训练：Word2Vec + NCE</h2>
+    <div class="body">
+        <div class="two-col">
+            <div class="col">
+                <h3>传统 Softmax 的问题</h3>
+                <ul>
+                    <li>分母需遍历整个词汇表</li>
+                    <li>词表大时计算量爆炸</li>
+                    <li>训练 Loss 先降后升，不稳定</li>
+                </ul>
+            </div>
+            <div class="col">
+                <h3>我们的方案：NCE 损失</h3>
+                <ul>
+                    <li>将多分类转为<span class="highlight">二分类</span>：判断是真实上下文词还是噪声词</li>
+                    <li>只需采样 <span class="highlight">64</span> 个负样本</li>
+                    <li>训练稳定，Loss 正常收敛</li>
+                </ul>
+            </div>
+        </div>
+        <div class="code-block">
+loss = tf.nn.nce_loss(weights, biases, labels, inputs,
+                      num_sampled=64, num_classes=vocab_size)
+        </div>
+    </div>
+    <div class="page-num">4 / 10</div>
+</div>
+
+<!-- Slide 5: 基础分类器 -->
+<div class="slide content-slide">
+    <h2>04 基础分类器实现</h2>
+    <div class="body" style="font-size: 22px;">
+        <p style="margin-bottom: 12px; font-size: 24px;">我们实现了三种基线模型，覆盖不同文本特征表示方式：</p>
+        <div style="display: flex; gap: 20px; width: 100%;">
+            <div style="flex: 1; background: rgba(0,0,0,0.2); border-radius: 12px; padding: 16px;">
+                <h3 style="font-size: 20px; color: #ffd700; margin-bottom: 8px;">MLP</h3>
+                <p style="font-size: 16px; margin-bottom: 6px;"><strong>输入：</strong>词向量求和 (200维)</p>
+                <div class="code-block" style="font-size: 13px; padding: 8px 10px; margin: 6px 0;">
+Dropout(0.5)<br>
+→ Dense(200, ReLU)<br>
+→ Dropout(0.5)<br>
+→ Dense(2)
+                </div>
+                <p style="font-size: 15px; color: #aaa; margin-top: 6px;">▸ 简单快速，但完全丢失词序</p>
+            </div>
+            <div style="flex: 1; background: rgba(0,0,0,0.2); border-radius: 12px; padding: 16px;">
+                <h3 style="font-size: 20px; color: #ffd700; margin-bottom: 8px;">CNN</h3>
+                <p style="font-size: 16px; margin-bottom: 6px;"><strong>输入：</strong>词向量序列 (20×200)</p>
+                <div class="code-block" style="font-size: 13px; padding: 8px 10px; margin: 6px 0;">
+Conv1D(6 filters, k=3)<br>
+→ MaxPool1D(3)<br>
+→ Flatten<br>
+→ Dropout(0.5)<br>
+→ Dense(2)
+                </div>
+                <p style="font-size: 15px; color: #aaa; margin-top: 6px;">▸ 提取局部 n-gram 短语特征</p>
+            </div>
+            <div style="flex: 1; background: rgba(0,0,0,0.2); border-radius: 12px; padding: 16px;">
+                <h3 style="font-size: 20px; color: #ffd700; margin-bottom: 8px;">RNN (LSTM)</h3>
+                <p style="font-size: 16px; margin-bottom: 6px;"><strong>输入：</strong>词向量序列 (20×200)</p>
+                <div class="code-block" style="font-size: 13px; padding: 8px 10px; margin: 6px 0;">
+LSTM(64)<br>
+→ Dropout(0.2)<br>
+→ Dense(2)
+                </div>
+                <p style="font-size: 15px; color: #aaa; margin-top: 6px;">▸ 门控机制捕捉长距离依赖</p>
+            </div>
+        </div>
+        <div class="box" style="margin-top: 12px; padding: 10px 18px;">
+            <strong>注意：</strong>以上均为基线模型，下文将介绍我们在模型架构和训练策略上的改进
+        </div>
+    </div>
+    <div class="page-num">5 / 10</div>
+</div>
+
+<!-- Slide 6: BiLSTM-Attention -->
+<div class="slide content-slide">
+    <h2>05 创新点 ①：BiLSTM-Attention</h2>
+    <div class="body">
+        <div class="two-col">
+            <div class="col">
+                <h3>双向 LSTM</h3>
+                <ul>
+                    <li>前向 + 后向两个 LSTM</li>
+                    <li>每个词同时拥有<span class="highlight">完整上下文</span></li>
+                    <li>解决单向 RNN 信息缺失问题</li>
+                </ul>
+            </div>
+            <div class="col">
+                <h3>自注意力机制</h3>
+                <ul>
+                    <li>为每个词计算注意力权重</li>
+                    <li>自动聚焦关键词（如"中奖""转账"）</li>
+                    <li>加权求和得到句向量表示</li>
+                </ul>
+            </div>
+        </div>
+        <div class="code-block" style="margin-top: 12px; font-size: 18px; padding: 14px 24px;">
+# 网络结构
+输入 → Bidirectional(LSTM) → SelfAttention → Dropout → Dense(2)
+
+# 自注意力计算
+e_i = tanh(x_i · W + b) · u          # 每个词的注意力分数
+α_i = softmax(e_i)                   # 归一化为权重（和为1）
+context = Σ(α_i · x_i)               # 加权求和得到句子向量
+        </div>
+        <p style="margin-top: 10px; color: #ffd700; font-size: 22px;">▸ 这是本项目效果最好的单模型</p>
+    </div>
+    <div class="page-num">6 / 10</div>
+</div>
+
+<!-- Slide 7: Focal Loss -->
+<div class="slide content-slide">
+    <h2>06 创新点 ②：Focal Loss</h2>
+    <div class="body">
+        <div class="box">
+            <strong>问题：</strong>类别不平衡导致模型偏向预测"正常短信"，垃圾短信<span class="highlight">漏检率高</span>
+        </div>
+        <div class="two-col" style="margin-top: 20px;">
+            <div class="col">
+                <h3>核心思想</h3>
+                <ul>
+                    <li>降低<span class="highlight">简单样本</span>（易分类的正常短信）的权重</li>
+                    <li>提高<span class="highlight">难样本</span>（难分垃圾短信）的权重</li>
+                    <li>让模型更关注"学不会"的样本</li>
+                </ul>
+            </div>
+            <div class="col">
+                <h3>公式</h3>
+                <div class="code-block" style="font-size: 22px;">
+FL = α × (1 - p)ᵞ × CE<br><br>
+p 越高（越容易）→ 权重越小<br>
+γ=2 时，p=0.9 的权重仅剩 0.01
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="page-num">7 / 10</div>
+</div>
+
+<!-- Slide 8: 训练优化 -->
+<div class="slide content-slide">
+    <h2>07 创新点 ③：训练策略优化</h2>
+    <div class="body">
+        <div class="two-col">
+            <div class="col">
+                <h3>余弦退火学习率</h3>
+                <ul>
+                    <li><span class="highlight">Warmup 预热</span>：前 10% 步数线性升温</li>
+                    <li><span class="highlight">余弦退火</span>：后续按余弦曲线降温至接近 0</li>
+                    <li>避免训练后期震荡，精细搜索最优解</li>
+                </ul>
+            </div>
+            <div class="col">
+                <h3>早停法 (Early Stopping)</h3>
+                <ul>
+                    <li>监控验证集准确率</li>
+                    <li>连续 <span class="highlight">10</span> 个 epoch 无提升则自动停止</li>
+                    <li>防止过拟合，节省训练时间</li>
+                </ul>
+            </div>
+        </div>
+        <div class="box" style="margin-top: 20px;">
+            <strong>其他辅助策略：</strong>标签平滑 (Label Smoothing) 防止模型过度自信；Dropout 正则化；模型集成 (加权平均 / 投票) 提升稳定性
+        </div>
+    </div>
+    <div class="page-num">8 / 10</div>
+</div>
+
+<!-- Slide 9: 实验结果 -->
+<div class="slide content-slide">
+    <h2>08 实验结果对比</h2>
+    <div class="body">
+        <table style="font-size: 19px;">
+            <tr>
+                <th>模型 / 方法</th>
+                <th>Accuracy</th>
+                <th>Precision</th>
+                <th>Recall</th>
+                <th>F1-Score</th>
+            </tr>
+            <tr>
+                <td>MLP（基线）</td>
+                <td>93.20%</td>
+                <td>93.5%</td>
+                <td>78.0%</td>
+                <td>85.1%</td>
+            </tr>
+            <tr>
+                <td>RNN（基线）</td>
+                <td>94.10%</td>
+                <td>94.2%</td>
+                <td>80.5%</td>
+                <td>86.8%</td>
+            </tr>
+            <tr>
+                <td>CNN（基线）</td>
+                <td>94.65%</td>
+                <td>94.8%</td>
+                <td>81.5%</td>
+                <td>87.7%</td>
+            </tr>
+            <tr>
+                <td>+ Focal Loss</td>
+                <td>95.87%</td>
+                <td>93.5%</td>
+                <td>91.2%</td>
+                <td>92.3%</td>
+            </tr>
+            <tr>
+                <td>多尺度 TextCNN</td>
+                <td>96.33%</td>
+                <td>95.2%</td>
+                <td>92.8%</td>
+                <td>94.0%</td>
+            </tr>
+            <tr>
+                <td>模型集成（投票）</td>
+                <td>96.70%</td>
+                <td>95.8%</td>
+                <td>94.1%</td>
+                <td>94.9%</td>
+            </tr>
+            <tr class="best">
+                <td><strong>BiLSTM-Attention ⭐</strong></td>
+                <td><strong>96.73%</strong></td>
+                <td><strong>96.1%</strong></td>
+                <td><strong>94.5%</strong></td>
+                <td><strong>95.3%</strong></td>
+            </tr>
+        </table>
+        <div class="box" style="margin-top: 18px; font-size: 22px;">
+            <strong>关键发现：</strong>基线 CNN 因类别不平衡导致 <span class="highlight">Recall 仅 81.5%</span>（大量垃圾短信漏检）。引入 Focal Loss 后 Recall 跃升至 <span class="highlight">91.2%</span>；BiLSTM-Attention 在 Precision 和 Recall 上达到最佳平衡，<span class="highlight">F1 达 95.3%</span>
+        </div>
+    </div>
+    <div class="page-num">9 / 10</div>
+</div>
+
+<!-- Slide 10: 总结 -->
+<div class="slide content-slide">
+    <h2>09 总结</h2>
+    <div class="body">
+        <ul>
+            <li><strong>工程层面：</strong>基于 TensorFlow/Keras 实现了一套模块化的垃圾文本分类系统，涵盖数据加载、特征提取、模型训练全流程</li>
+            <li><strong>模型层面：</strong>提出 BiLSTM-Attention 架构，融合双向上下文与自注意力机制，准确率达 <span class="highlight">96.73%</span></li>
+            <li><strong>训练层面：</strong>引入 Focal Loss 解决类别不平衡，结合余弦退火、早停、标签平滑等策略提升训练稳定性</li>
+            <li><strong>未来工作：</strong>可尝试预训练语言模型（如 BERT）进一步提升精度；探索模型轻量化部署到移动端</li>
+        </ul>
+        <div style="margin-top: 50px; text-align: center; font-size: 32px; color: #00d4ff;">
+            感谢聆听，欢迎提问！
+        </div>
+    </div>
+    <div class="page-num">10 / 10</div>
+</div>
+
+<script>
+    const slides = document.querySelectorAll('.slide');
+    let current = 0;
+
+    function showSlide(index) {
+        slides.forEach(s => s.classList.remove('active'));
+        if (index >= 0 && index < slides.length) {
+            slides[index].classList.add('active');
+            current = index;
+        }
+    }
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ') {
+            e.preventDefault();
+            if (current < slides.length - 1) showSlide(current + 1);
+        } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+            e.preventDefault();
+            if (current > 0) showSlide(current - 1);
+        } else if (e.key === 'Home') {
+            showSlide(0);
+        } else if (e.key === 'End') {
+            showSlide(slides.length - 1);
+        }
+    });
+
+    // 支持点击翻页
+    document.addEventListener('click', () => {
+        if (current < slides.length - 1) showSlide(current + 1);
+    });
+</script>
+</body>
+</html>
