@@ -14,6 +14,7 @@
 - clean 数据去重、冲突标签剔除、分层切分。
 - mild AST 与 strong AST 数据构建。
 - AST 词库外置为独立 JSON，并补充词库覆盖率审计脚本。
+- 已补充训练集动态 AST 词表，默认与外部固定词库合并使用。
 - Word2Vec 真实训练。
 - MLP、TextCNN、BiLSTM 三类模型真实训练。
 - 已补充可重训的 BiLSTM-Attention、Focal Loss 变体和 soft voting 模型集成代码。
@@ -58,6 +59,7 @@ AST 数据构建遵守：
 clean 原始数据
   -> 去重和冲突标签剔除
   -> train/val/test 分层切分
+  -> 只从 train split 挖掘动态 AST 词表
   -> split 内生成 AST
   -> train_clean 或 train_clean_ast 训练
   -> test_clean 与 test_ast 评估
@@ -77,7 +79,7 @@ spam lexicon coverage: 0.9191
 sampled strong-AST generation rate: 1.0000
 ```
 
-该词库同时被 AST 数据构建、confidence-search、图形化界面和 jieba 分词入口使用，避免训练/演示/审计规则不一致。
+该词库同时被 AST 数据构建、confidence-search、图形化界面和 jieba 分词入口使用，避免训练/演示/审计规则不一致。本版还新增 `src/ast_vocabulary.py`：从 train split 自动挖掘 spam 区分度高的关键词，生成拼音、首字母、符号插入、繁体和可选 Word2Vec 相似词扰动，并保存为 `dynamic_vocab.json`。最终 AST 生成默认使用“外部固定词库 + 动态词表”，如需消融可用 `--no-dynamic-vocab` 关闭动态扩展。
 
 审计命令：
 
@@ -226,20 +228,22 @@ strong AST 完整命令：
 
 ## Mild AST 结果
 
-| Mode | Model | Clean Acc | Clean Spam Recall | AST Acc | AST Spam Recall | Robust Drop | UCI Acc |
-|---|---|---:|---:|---:|---:|---:|---:|
-| baseline | mlp | 0.9621 | 0.9714 | 0.9469 | 0.9680 | 0.0152 | 0.8947 |
-| baseline | cnn | 0.9736 | 0.9781 | 0.9557 | 0.9764 | 0.0178 | 0.8746 |
-| baseline | rnn | 0.9711 | 0.9746 | 0.9577 | 0.9667 | 0.0133 | 0.9038 |
-| text_ast | mlp | 0.9592 | 0.9627 | 0.9560 | 0.9582 | 0.0032 | 0.9112 |
-| text_ast | cnn | 0.9702 | 0.9732 | 0.9681 | 0.9712 | 0.0021 | 0.9150 |
-| text_ast | rnn | 0.9697 | 0.9732 | 0.9679 | 0.9708 | 0.0018 | 0.9311 |
-| embedding_fgm | mlp | 0.9678 | 0.9717 | 0.9521 | 0.9700 | 0.0157 | 0.8945 |
-| embedding_fgm | cnn | 0.9778 | 0.9766 | 0.9617 | 0.9742 | 0.0161 | 0.8854 |
-| embedding_fgm | rnn | 0.9766 | 0.9802 | 0.9682 | 0.9758 | 0.0084 | 0.8945 |
-| text_ast_fgm | mlp | 0.9688 | 0.9719 | 0.9656 | 0.9690 | 0.0032 | 0.9056 |
-| text_ast_fgm | cnn | 0.9770 | 0.9772 | 0.9731 | 0.9736 | 0.0039 | 0.9151 |
-| text_ast_fgm | rnn | 0.9745 | 0.9731 | 0.9726 | 0.9731 | 0.0018 | 0.9324 |
+Precision / Recall / F1-Score 均以 spam 类作为正类。
+
+| Mode | Model | Clean Acc | Clean P | Clean R | Clean F1 | AST Acc | AST P | AST R | AST F1 | Robust Drop | UCI Acc | UCI F1 |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| baseline | mlp | 0.9621 | 0.9721 | 0.9714 | 0.9717 | 0.9469 | 0.9659 | 0.9680 | 0.9669 | 0.0152 | 0.8947 | 0.6836 |
+| baseline | cnn | 0.9736 | 0.9824 | 0.9781 | 0.9803 | 0.9557 | 0.9687 | 0.9764 | 0.9725 | 0.0178 | 0.8746 | 0.6548 |
+| baseline | rnn | 0.9711 | 0.9822 | 0.9746 | 0.9783 | 0.9577 | 0.9804 | 0.9667 | 0.9735 | 0.0133 | 0.9038 | 0.7112 |
+| text_ast | mlp | 0.9592 | 0.9761 | 0.9627 | 0.9694 | 0.9560 | 0.9866 | 0.9582 | 0.9722 | 0.0032 | 0.9112 | 0.6950 |
+| text_ast | cnn | 0.9702 | 0.9821 | 0.9732 | 0.9777 | 0.9681 | 0.9889 | 0.9712 | 0.9799 | 0.0021 | 0.9150 | 0.7310 |
+| text_ast | rnn | 0.9697 | 0.9814 | 0.9732 | 0.9773 | 0.9679 | 0.9889 | 0.9708 | 0.9798 | 0.0018 | 0.9311 | 0.7653 |
+| embedding_fgm | mlp | 0.9678 | 0.9800 | 0.9717 | 0.9759 | 0.9521 | 0.9703 | 0.9700 | 0.9702 | 0.0157 | 0.8945 | 0.6872 |
+| embedding_fgm | cnn | 0.9778 | 0.9901 | 0.9766 | 0.9833 | 0.9617 | 0.9779 | 0.9742 | 0.9761 | 0.0161 | 0.8854 | 0.6748 |
+| embedding_fgm | rnn | 0.9766 | 0.9849 | 0.9802 | 0.9825 | 0.9682 | 0.9844 | 0.9758 | 0.9801 | 0.0084 | 0.8945 | 0.7063 |
+| text_ast_fgm | mlp | 0.9688 | 0.9814 | 0.9719 | 0.9766 | 0.9656 | 0.9879 | 0.9690 | 0.9784 | 0.0032 | 0.9056 | 0.7042 |
+| text_ast_fgm | cnn | 0.9770 | 0.9884 | 0.9772 | 0.9828 | 0.9731 | 0.9928 | 0.9736 | 0.9831 | 0.0039 | 0.9151 | 0.7326 |
+| text_ast_fgm | rnn | 0.9745 | 0.9887 | 0.9731 | 0.9808 | 0.9726 | 0.9927 | 0.9731 | 0.9828 | 0.0018 | 0.9324 | 0.7849 |
 
 结论：
 
@@ -250,20 +254,22 @@ strong AST 完整命令：
 
 ## Strong AST 结果
 
-| Mode | Model | Clean Acc | Strong AST Acc | Robust Drop | Strong AST Spam Recall | UCI Acc |
-|---|---|---:|---:|---:|---:|---:|
-| baseline | mlp | 0.9612 | 0.8467 | 0.1145 | 0.8439 | 0.9055 |
-| baseline | cnn | 0.9736 | 0.8720 | 0.1016 | 0.8736 | 0.8988 |
-| baseline | rnn | 0.9709 | 0.8413 | 0.1296 | 0.8320 | 0.9116 |
-| text_ast | mlp | 0.9532 | 0.9715 | -0.0182 | 0.9724 | 0.9142 |
-| text_ast | cnn | 0.9656 | 0.9811 | -0.0154 | 0.9833 | 0.8970 |
-| text_ast | rnn | 0.9636 | 0.9800 | -0.0164 | 0.9823 | 0.9453 |
-| embedding_fgm | mlp | 0.9661 | 0.8764 | 0.0897 | 0.8793 | 0.8950 |
-| embedding_fgm | cnn | 0.9791 | 0.8701 | 0.1090 | 0.8708 | 0.8986 |
-| embedding_fgm | rnn | 0.9766 | 0.8000 | 0.1766 | 0.7842 | 0.9087 |
-| text_ast_fgm | mlp | 0.9583 | 0.9742 | -0.0159 | 0.9743 | 0.9221 |
-| text_ast_fgm | cnn | 0.9711 | 0.9824 | -0.0113 | 0.9828 | 0.9232 |
-| text_ast_fgm | rnn | 0.9687 | 0.9802 | -0.0116 | 0.9799 | 0.9616 |
+Precision / Recall / F1-Score 均以 spam 类作为正类。
+
+| Mode | Model | Clean Acc | Clean P | Clean R | Clean F1 | Strong AST Acc | Strong AST P | Strong AST R | Strong AST F1 | Robust Drop | UCI Acc | UCI F1 |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| baseline | mlp | 0.9612 | 0.9786 | 0.9633 | 0.9709 | 0.8467 | 0.9815 | 0.8439 | 0.9075 | 0.1145 | 0.9055 | 0.6884 |
+| baseline | cnn | 0.9736 | 0.9842 | 0.9763 | 0.9802 | 0.8720 | 0.9805 | 0.8736 | 0.9240 | 0.1016 | 0.8988 | 0.6974 |
+| baseline | rnn | 0.9709 | 0.9829 | 0.9736 | 0.9782 | 0.8413 | 0.9879 | 0.8320 | 0.9033 | 0.1296 | 0.9116 | 0.7275 |
+| text_ast | mlp | 0.9532 | 0.9777 | 0.9520 | 0.9647 | 0.9715 | 0.9955 | 0.9724 | 0.9838 | -0.0182 | 0.9142 | 0.6726 |
+| text_ast | cnn | 0.9656 | 0.9807 | 0.9678 | 0.9742 | 0.9811 | 0.9954 | 0.9833 | 0.9893 | -0.0154 | 0.8970 | 0.6818 |
+| text_ast | rnn | 0.9636 | 0.9808 | 0.9646 | 0.9726 | 0.9800 | 0.9952 | 0.9823 | 0.9887 | -0.0164 | 0.9453 | 0.7857 |
+| embedding_fgm | mlp | 0.9661 | 0.9780 | 0.9714 | 0.9747 | 0.8764 | 0.9799 | 0.8793 | 0.9269 | 0.0897 | 0.8950 | 0.6840 |
+| embedding_fgm | cnn | 0.9791 | 0.9912 | 0.9776 | 0.9843 | 0.8701 | 0.9813 | 0.8708 | 0.9227 | 0.1090 | 0.8986 | 0.6987 |
+| embedding_fgm | rnn | 0.9766 | 0.9882 | 0.9768 | 0.9825 | 0.8000 | 0.9890 | 0.7842 | 0.8748 | 0.1766 | 0.9087 | 0.7339 |
+| text_ast_fgm | mlp | 0.9583 | 0.9829 | 0.9544 | 0.9685 | 0.9742 | 0.9966 | 0.9743 | 0.9853 | -0.0159 | 0.9221 | 0.6814 |
+| text_ast_fgm | cnn | 0.9711 | 0.9888 | 0.9678 | 0.9782 | 0.9824 | 0.9974 | 0.9828 | 0.9900 | -0.0113 | 0.9232 | 0.7500 |
+| text_ast_fgm | rnn | 0.9687 | 0.9913 | 0.9618 | 0.9763 | 0.9802 | 0.9978 | 0.9799 | 0.9888 | -0.0116 | 0.9616 | 0.8558 |
 
 结论：
 
@@ -274,10 +280,10 @@ strong AST 完整命令：
 
 ## 跨扰动评估
 
-| Eval | Best Model | Acc | Spam Recall | 结果文件 |
-|---|---|---:|---:|---|
-| mild 训练模型 -> strong AST | text_ast/cnn | 0.9406 | 0.9390 | `output/submission_full_20260706_full/metrics/mild_on_strong_test_ast.json` |
-| strong 训练模型 -> mild AST | embedding_fgm/rnn | 0.9666 | 0.9733 | `output/submission_strong_ast_20260706_full/metrics/strong_on_mild_test_ast.json` |
+| Eval | Best Model | Acc | Precision | Recall | F1-Score | 结果文件 |
+|---|---|---:|---:|---:|---:|---|
+| mild 训练模型 -> strong AST | text_ast/cnn | 0.9406 | 0.9940 | 0.9390 | 0.9657 | `output/submission_full_20260706_full/metrics/mild_on_strong_test_ast.json` |
+| strong 训练模型 -> mild AST | embedding_fgm/rnn | 0.9666 | 0.9849 | 0.9733 | 0.9791 | `output/submission_strong_ast_20260706_full/metrics/strong_on_mild_test_ast.json` |
 
 补充观察：原 mild 训练的 `text_ast_fgm/cnn` 在 strong AST 上 Acc 为 `0.8999`，而 strong 训练的 `text_ast_fgm/cnn` 在 strong AST 原生测试上 Acc 为 `0.9824`。这说明新增 strong AST 训练显著提升了对强规避写法的适应能力，但强扰动也会带来分布偏移，因此报告中保留 mild、strong、cross 三类结果更完整。
 
@@ -337,7 +343,7 @@ output/submission_strong_ast_20260706_full/
 
 ## 重要说明
 
-当前表格中的 mild/strong 训练指标来自已完成的默认矩阵训练产物。若继续使用本次扩展后的外部 AST 词库，或将 Focal Loss、BiLSTM-Attention、`ensemble_vote` 作为最终实验版本，应重新执行：
+当前表格中的 mild/strong 训练指标来自已完成的默认矩阵训练产物。若继续使用本次扩展后的外部 AST 词库、启用动态词表，或将 Focal Loss、BiLSTM-Attention、`ensemble_vote` 作为最终实验版本，应重新执行：
 
 ```text
 1. rebuild AST dataset
@@ -347,7 +353,7 @@ output/submission_strong_ast_20260706_full/
 5. rerun confidence-search attack and AST quality review
 ```
 
-没有重新跑完上述流程前，不能把旧指标称为“扩展词库后的最终指标”。
+没有重新跑完上述流程前，不能把旧指标称为“固定词库 + 动态词表后的最终指标”。
 
 ## 图形化测试程序
 

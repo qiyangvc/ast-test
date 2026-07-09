@@ -395,8 +395,8 @@
             </tr>
             <tr>
                 <td>+ Focal Loss</td>
-                <td>当前使用 class-weight CE 处理类别不平衡</td>
-                <td>未单独重跑 Focal Loss，作为后续可扩展项</td>
+                <td>FocalLoss(gamma=2.0) + class weight</td>
+                <td>已补入 full-matrix，重训后生成最终指标</td>
             </tr>
             <tr>
                 <td>多尺度 TextCNN</td>
@@ -405,19 +405,19 @@
             </tr>
             <tr>
                 <td>模型集成（投票）</td>
-                <td>当前保留 12 个模型独立指标</td>
-                <td>未作为最终指标，可后续用 MLP/CNN/RNN 投票补充</td>
+                <td>ensemble_vote：多模型 soft voting</td>
+                <td>已补入评估与网页推理，重训后自动输出</td>
             </tr>
             <tr class="best">
                 <td>BiLSTM-Attention</td>
-                <td>当前为 BiLSTM 池化版</td>
-                <td>Attention 未纳入最终训练，本次重点转向 AST 鲁棒性</td>
+                <td>BiLSTM 输出经 attention 加权池化</td>
+                <td>已补入 full-matrix，作为旧 PPT 方法补齐项</td>
             </tr>
         </table>
         <div class="code-block">vector_size=200, max_vocab=50000, max_len=64
 w2v_epochs=20, clf_epochs=10, batch_size=512</div>
         <div class="box bridge-box">
-            <strong>承接关系：</strong>旧版表格中的基线、RNN、CNN 和多尺度 TextCNN 已进入当前实验；Focal Loss、投票集成和 Attention 不硬套旧指标，本次重点转为 AST 对抗训练、强扰动测试和跨扰动泛化。
+            <strong>承接关系：</strong>旧版表格中的基线、RNN、CNN、多尺度 TextCNN、Focal Loss、投票集成和 Attention 均已进入代码矩阵；新增项不硬套旧指标，需 full-matrix 重训后更新最终结果。
         </div>
     </div>
     <div class="page-num">6 / 10</div>
@@ -427,39 +427,52 @@ w2v_epochs=20, clf_epochs=10, batch_size=512</div>
 <div class="slide content-slide">
     <h2>06 mild AST 实验结果</h2>
     <div class="body">
-        <table>
+        <div class="box bridge-box">
+            <strong>指标口径：</strong>下表为 mild AST test 指标，Precision / Recall / F1-Score 均以 spam 类作为正类。
+        </div>
+        <table class="compact-table">
             <tr>
                 <th>模型组</th>
-                <th>Clean Acc</th>
-                <th>AST Acc</th>
+                <th>Accuracy</th>
+                <th>Precision</th>
+                <th>Recall</th>
+                <th>F1-Score</th>
                 <th>Robust Drop</th>
                 <th>UCI Acc</th>
             </tr>
             <tr>
                 <td>baseline / cnn</td>
-                <td>0.9736</td>
                 <td>0.9557</td>
+                <td>0.9687</td>
+                <td>0.9764</td>
+                <td>0.9725</td>
                 <td>0.0178</td>
                 <td>0.8746</td>
             </tr>
             <tr>
                 <td>text_ast / cnn</td>
-                <td>0.9702</td>
                 <td>0.9681</td>
+                <td>0.9889</td>
+                <td>0.9712</td>
+                <td>0.9799</td>
                 <td>0.0021</td>
                 <td>0.9150</td>
             </tr>
             <tr class="best">
                 <td>text_ast_fgm / cnn</td>
-                <td>0.9770</td>
                 <td>0.9731</td>
+                <td>0.9928</td>
+                <td>0.9736</td>
+                <td>0.9831</td>
                 <td>0.0039</td>
                 <td>0.9151</td>
             </tr>
             <tr>
                 <td>text_ast_fgm / rnn</td>
-                <td>0.9745</td>
                 <td>0.9726</td>
+                <td>0.9927</td>
+                <td>0.9731</td>
+                <td>0.9828</td>
                 <td class="best">0.0018</td>
                 <td class="best">0.9324</td>
             </tr>
@@ -475,36 +488,49 @@ w2v_epochs=20, clf_epochs=10, batch_size=512</div>
 <div class="slide content-slide">
     <h2>07 strong AST 与跨扰动测试</h2>
     <div class="body">
-        <table>
+        <div class="box bridge-box">
+            <strong>指标口径：</strong>Precision / Recall / F1-Score 均以 spam 类作为正类。
+        </div>
+        <table class="compact-table">
             <tr>
                 <th>评估项</th>
                 <th>最佳模型</th>
                 <th>Accuracy</th>
-                <th>Spam Recall</th>
+                <th>Precision</th>
+                <th>Recall</th>
+                <th>F1-Score</th>
             </tr>
             <tr class="best">
                 <td>strong AST 原生测试</td>
                 <td>text_ast_fgm / cnn</td>
                 <td>0.9824</td>
+                <td>0.9974</td>
                 <td>0.9828</td>
+                <td>0.9900</td>
             </tr>
             <tr>
                 <td>strong UCI 外部测试</td>
                 <td>text_ast_fgm / rnn</td>
                 <td>0.9616</td>
-                <td>-</td>
+                <td>0.8616</td>
+                <td>0.8501</td>
+                <td>0.8558</td>
             </tr>
             <tr>
                 <td>mild 训练 → strong AST</td>
                 <td>text_ast / cnn</td>
                 <td>0.9406</td>
+                <td>0.9940</td>
                 <td>0.9390</td>
+                <td>0.9657</td>
             </tr>
             <tr>
                 <td>strong 训练 → mild AST</td>
                 <td>embedding_fgm / rnn</td>
                 <td>0.9666</td>
+                <td>0.9849</td>
                 <td>0.9733</td>
+                <td>0.9791</td>
             </tr>
         </table>
         <div class="box">
@@ -532,7 +558,7 @@ w2v_epochs=20, clf_epochs=10, batch_size=512</div>
                 <h3>图形化演示平台</h3>
                 <ul>
                     <li>单条文本 spam / normal 预测</li>
-                    <li>12 个模型横向对比</li>
+                    <li>默认 12 个模型横向对比；full-matrix 可扩展到 32 个基础模型与集成结果</li>
                     <li>AST 扰动候选生成</li>
                     <li>Clean / AST / UCI 指标查看</li>
                 </ul>

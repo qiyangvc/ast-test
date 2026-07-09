@@ -15,6 +15,7 @@ import torch
 import torch.nn as nn
 
 from src.adversarial_text import ChineseSpamTextAttacker, segment_for_project
+from src.ast_vocabulary import summarize_vocab
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -169,6 +170,7 @@ class SubmissionModelService:
         self.output_dir = Path(output_dir)
         self.metrics_path = self.output_dir / "metrics/all_results.json"
         self._metrics = self._load_metrics()
+        self.dynamic_vocab = self._load_dynamic_vocab()
         self.max_len = int(max_len or self._config_value("max_len", DEFAULT_MAX_LEN))
         self.batch_size = int(self._config_value("batch_size", DEFAULT_BATCH_SIZE))
         self._cache: Dict[Tuple[str, str], LoadedModel] = {}
@@ -181,6 +183,30 @@ class SubmissionModelService:
     def _config_value(self, key: str, default: object) -> object:
         value = (self._metrics.get("config") or {}).get(key, default)
         return default if value in {None, ""} else value
+
+    def _load_dynamic_vocab(self) -> Dict[str, List[str]]:
+        candidates = [self.output_dir / "dynamic_vocab.json"]
+        dataset_dir = (self._metrics.get("config") or {}).get("dataset_dir")
+        if dataset_dir:
+            dataset_path = Path(str(dataset_dir))
+            if not dataset_path.is_absolute():
+                dataset_path = PROJECT_ROOT / dataset_path
+            candidates.append(dataset_path / "dynamic_vocab.json")
+
+        for path in candidates:
+            if not path.exists():
+                continue
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(payload, dict):
+                return {
+                    str(key): [str(value) for value in values if str(value).strip()]
+                    for key, values in payload.items()
+                    if isinstance(values, list)
+                }
+        return {}
+
+    def dynamic_vocab_summary(self) -> Dict[str, object]:
+        return summarize_vocab(self.dynamic_vocab) if self.dynamic_vocab else {"n_keywords": 0, "n_candidates": 0}
 
     def available_models(self) -> Dict[str, List[str]]:
         from_metrics = self._metrics.get("runs") or {}
@@ -208,11 +234,16 @@ class SubmissionModelService:
                         "mode": mode,
                         "model": model_name,
                         "clean_accuracy": clean["accuracy"],
+                        "clean_spam_precision": clean["spam_precision"],
                         "clean_spam_recall": clean["spam_recall"],
+                        "clean_spam_f1": clean["spam_f1"],
                         "ast_accuracy": ast["accuracy"],
+                        "ast_spam_precision": ast["spam_precision"],
                         "ast_spam_recall": ast["spam_recall"],
+                        "ast_spam_f1": ast["spam_f1"],
                         "robust_drop": robust["robust_drop"],
                         "uci_accuracy": (uci.get("metrics") or {}).get("accuracy"),
+                        "uci_spam_f1": (uci.get("metrics") or {}).get("spam_f1"),
                     }
                 )
         return rows
@@ -393,6 +424,8 @@ class SubmissionModelService:
             seed=42,
             max_char_replacements=4 if is_strong else 2,
             max_symbol_insertions=4 if is_strong else 2,
+            phrase_variants=self.dynamic_vocab,
+            strong_phrase_variants=self.dynamic_vocab,
         )
         candidates = attacker.generate(text, label, max_variants=max_variants, strength=strength)
 

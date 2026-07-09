@@ -81,6 +81,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-variants-spam", type=int, default=strong_cfg["max_variants_spam"])
     parser.add_argument("--max-variants-normal", type=int, default=strong_cfg["max_variants_normal"])
     parser.add_argument("--ast-strength", choices=["mild", "balanced", "strong"], default=strong_cfg["ast_strength"])
+    parser.add_argument("--dynamic-vocab-top-k", type=int, default=strong_cfg.get("dynamic_vocab_top_k", 80))
+    parser.add_argument("--no-dynamic-vocab", action="store_true")
     parser.add_argument("--confidence-attack-limit", type=int, default=0)
     parser.add_argument("--confidence-attack-strength", choices=["mild", "balanced", "strong"], default="strong")
     parser.add_argument("--review-sample-size", type=int, default=0)
@@ -110,6 +112,8 @@ def main() -> None:
             max_variants_spam=args.max_variants_spam,
             max_variants_normal=args.max_variants_normal,
             ast_strength=args.ast_strength,
+            use_dynamic_vocab=not args.no_dynamic_vocab,
+            dynamic_vocab_top_k=args.dynamic_vocab_top_k,
         )
         print("Strong AST dataset build completed.")
         print(f"Loaded: {stats.loaded}")

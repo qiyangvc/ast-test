@@ -22,6 +22,8 @@ class Config:
         "max_variants_spam": 2,
         "max_variants_normal": 1,
         "ast_strength": "mild",
+        "use_dynamic_vocab": True,
+        "dynamic_vocab_top_k": 80,
         "output_dir_name": "ast_experiment",
     }
 
@@ -33,6 +35,8 @@ class Config:
         "max_variants_spam": 4,
         "max_variants_normal": 1,
         "ast_strength": "strong",
+        "use_dynamic_vocab": True,
+        "dynamic_vocab_top_k": 80,
         "output_dir_name": "ast_experiment_strong",
     }
 

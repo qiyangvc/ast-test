@@ -35,6 +35,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from src.adversarial_text import ChineseSpamTextAttacker, segment_for_project
 from src.ast_dataset import LABEL_TO_PROJECT_ID, TextRecord, load_ast_jsonl
 from src.ast_metrics import binary_metrics, robustness_metrics, write_metrics_json
+from src.ast_vocabulary import summarize_vocab
 
 
 MODE_TRAIN_SPLIT = {
@@ -499,16 +500,42 @@ def load_all_splits(dataset_dir: Path):
     }
 
 
+def load_dynamic_vocab(dataset_dir: Path) -> Dict[str, List[str]]:
+    vocab_path = Path(dataset_dir) / "dynamic_vocab.json"
+    if not vocab_path.exists():
+        return {}
+    payload = json.loads(vocab_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        return {}
+    return {
+        str(key): [str(value) for value in values if str(value).strip()]
+        for key, values in payload.items()
+        if isinstance(values, list)
+    }
+
+
+def save_dynamic_vocab(output_dir: Path, vocab: Dict[str, List[str]]) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "dynamic_vocab.json").write_text(
+        json.dumps(vocab, ensure_ascii=False, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+
+
 def train_and_evaluate(cfg: RunConfig) -> Dict[str, object]:
     set_seed(cfg.seed)
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
     validate_modes_and_models(cfg.modes, cfg.models)
     records = load_all_splits(cfg.dataset_dir)
+    dynamic_vocab = load_dynamic_vocab(cfg.dataset_dir)
+    if dynamic_vocab:
+        save_dynamic_vocab(cfg.output_dir, dynamic_vocab)
     external_uci_path = PROJECT_ROOT / "data/external/canonical/uci_sms_spam_collection.jsonl"
     external_uci = load_ast_jsonl(external_uci_path) if external_uci_path.exists() else []
 
     results = {
         "config": {k: str(v) if isinstance(v, Path) else v for k, v in asdict(cfg).items()},
+        "dynamic_vocab_summary": summarize_vocab(dynamic_vocab) if dynamic_vocab else {"n_keywords": 0, "n_candidates": 0},
         "runs": {},
     }
 
@@ -659,9 +686,38 @@ def load_trained_model_for_attack(cfg: RunConfig, mode: str, model_name: str):
     return model, word2idx, records
 
 
-def confidence_search_attack(cfg: RunConfig, mode: str = "text_ast_fgm", model_name: str = "cnn") -> Dict[str, object]:
+def _trained_checkpoint_exists(cfg: RunConfig, mode: str, model_name: str) -> bool:
+    return (cfg.output_dir / "models" / mode / f"{model_name}.pt").exists()
+
+
+def confidence_search_attack(
+    cfg: RunConfig,
+    mode: Optional[str] = None,
+    model_name: str = "cnn",
+) -> Dict[str, object]:
+    if mode is None:
+        for candidate in ("text_ast_fgm", "text_ast_fgm_focal", "text_ast", "embedding_fgm", "baseline"):
+            if candidate in cfg.modes and _trained_checkpoint_exists(cfg, candidate, model_name):
+                mode = candidate
+                break
+    if mode is None:
+        return {
+            "mode": None,
+            "model": model_name,
+            "strength": cfg.confidence_attack_strength,
+            "searched": 0,
+            "successes": 0,
+            "attack_success_rate": 0.0,
+            "output": "",
+            "skipped": "no trained checkpoint found",
+        }
     model, word2idx, records = load_trained_model_for_attack(cfg, mode, model_name)
-    attacker = ChineseSpamTextAttacker(seed=cfg.seed)
+    dynamic_vocab = load_dynamic_vocab(cfg.dataset_dir)
+    attacker = ChineseSpamTextAttacker(
+        seed=cfg.seed,
+        phrase_variants=dynamic_vocab,
+        strong_phrase_variants=dynamic_vocab,
+    )
     spam_records = [r for r in records["test_clean"] if r.label == "spam"]
     if cfg.confidence_attack_limit > 0:
         spam_records = spam_records[: cfg.confidence_attack_limit]
@@ -827,6 +883,7 @@ def write_submission_report(cfg: RunConfig, results: Dict[str, object], attack_s
         f"- AST 数据目录：`{cfg.dataset_dir}`",
         "- 训练/验证/测试划分已先于 AST 生成完成，避免同源变体泄漏。",
         "- 已包含 TensorLayer text-antispam、SpamMessagesLR、FBS_SMS_Dataset 和 UCI 英文外部测试集。",
+        "- AST 生成默认采用外部领域词库 + 训练集动态词表；动态词表只从 train split 挖掘。",
         "",
         "## 训练配置",
         "",
@@ -841,8 +898,10 @@ def write_submission_report(cfg: RunConfig, results: Dict[str, object], attack_s
         "",
         "## 结果摘要",
         "",
-        "| Mode | Model | Clean Acc | AST Acc | Robust Drop | AST Spam Recall | UCI Acc |",
-        "|---|---|---:|---:|---:|---:|---:|",
+        "Precision / Recall / F1-Score 均以 spam 类作为正类。",
+        "",
+        "| Mode | Model | Clean Acc | Clean P | Clean R | Clean F1 | AST Acc | AST P | AST R | AST F1 | Robust Drop | UCI Acc | UCI F1 |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for mode, mode_result in results["runs"].items():
         for model_name, payload in mode_result.items():
@@ -851,19 +910,29 @@ def write_submission_report(cfg: RunConfig, results: Dict[str, object], attack_s
             robust = payload["robustness"]
             uci = payload.get("uci_en")
             uci_acc = "" if not uci else f"{uci['metrics']['accuracy']:.4f}"
+            uci_f1 = "" if not uci else f"{uci['metrics']['spam_f1']:.4f}"
             lines.append(
-                f"| {mode} | {model_name} | {clean['accuracy']:.4f} | {ast['accuracy']:.4f} | "
-                f"{robust['robust_drop']:.4f} | {ast['spam_recall']:.4f} | {uci_acc} |"
+                f"| {mode} | {model_name} | "
+                f"{clean['accuracy']:.4f} | {clean['spam_precision']:.4f} | {clean['spam_recall']:.4f} | {clean['spam_f1']:.4f} | "
+                f"{ast['accuracy']:.4f} | {ast['spam_precision']:.4f} | {ast['spam_recall']:.4f} | {ast['spam_f1']:.4f} | "
+                f"{robust['robust_drop']:.4f} | {uci_acc} | {uci_f1} |"
             )
+    dynamic_summary = results.get("dynamic_vocab_summary") or {}
     lines.extend(
         [
+            "",
+            "## 动态 AST 词表",
+            "",
+            f"- 关键词数：{dynamic_summary.get('n_keywords', 0)}",
+            f"- 候选扰动数：{dynamic_summary.get('n_candidates', 0)}",
+            f"- 输出：`{cfg.output_dir / 'dynamic_vocab.json'}`" if dynamic_summary.get("n_keywords", 0) else "- 输出：未生成动态词表",
             "",
             "## 基于模型置信度搜索的攻击",
             "",
             f"- 搜索模型：`{attack_summary.get('mode')}/{attack_summary.get('model')}`",
             f"- 攻击强度：`{attack_summary.get('strength')}`",
             f"- 搜索样本数：{attack_summary.get('searched')}",
-            f"- 攻击成功率：{attack_summary.get('attack_success_rate'):.4f}",
+            f"- 攻击成功率：{float(attack_summary.get('attack_success_rate') or 0.0):.4f}",
             f"- 输出：`{attack_summary.get('output')}`",
             "",
             "## AST 样本质量检查",

@@ -14,7 +14,7 @@ import random
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 try:
     import jieba
@@ -26,6 +26,7 @@ AttackType = str
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_LEXICON_PATH = PROJECT_ROOT / "lexicons" / "chinese_spam_ast_lexicon.json"
 _JIEBA_LEXICON_LOADED = False
+_REGISTERED_JIEBA_TERMS: set[str] = set()
 
 
 @dataclass
@@ -91,6 +92,115 @@ def _string_tuple(payload: object, field_name: str) -> Tuple[str, ...]:
     return values
 
 
+def _string_tuple_map(payload: object, field_name: str) -> Dict[str, Tuple[str, ...]]:
+    return _tuple_map(payload, field_name)
+
+
+def _pattern_specs(payload: object, field_name: str) -> Tuple[Dict[str, object], ...]:
+    if not isinstance(payload, list) or not payload:
+        raise ValueError(f"Lexicon field {field_name!r} must be a non-empty list.")
+    specs: List[Dict[str, object]] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            raise ValueError(f"Lexicon field {field_name!r} contains an invalid pattern spec: {item!r}")
+        name = str(item.get("name") or "").strip()
+        pattern = str(item.get("pattern") or "").strip()
+        if not name or not pattern:
+            raise ValueError(f"Lexicon field {field_name!r} pattern specs need name and pattern.")
+        spec: Dict[str, object] = {"name": name, "pattern": pattern}
+        for key in ("obfuscation_replacements", "split_replacements", "hint_replacements"):
+            if key in item:
+                spec[key] = _string_tuple(item[key], f"{field_name}.{name}.{key}")
+        spec["number_obfuscation"] = bool(item.get("number_obfuscation", False))
+        specs.append(spec)
+    return tuple(specs)
+
+
+def _special_replacements(payload: object, field_name: str) -> Dict[str, Dict[str, object]]:
+    if not isinstance(payload, list):
+        raise ValueError(f"Lexicon field {field_name!r} must be a list.")
+    result: Dict[str, Dict[str, object]] = {}
+    for item in payload:
+        if not isinstance(item, dict):
+            raise ValueError(f"Lexicon field {field_name!r} contains an invalid item: {item!r}")
+        keyword = str(item.get("keyword") or "").strip()
+        if not keyword:
+            raise ValueError(f"Lexicon field {field_name!r} item has empty keyword.")
+        result[keyword] = {
+            "probability": float(item.get("probability", 1.0)),
+            "replacements": _string_tuple(item.get("replacements"), f"{field_name}.{keyword}.replacements"),
+        }
+    return result
+
+
+def _attack_profiles(payload: object, field_name: str) -> Dict[str, Tuple[str, ...]]:
+    required = {"spam_mild", "normal_mild", "spam_balanced_extra", "spam_strong_extra"}
+    result = _tuple_map(payload, field_name)
+    missing = sorted(required.difference(result))
+    if missing:
+        raise ValueError(f"Lexicon field {field_name!r} missing profiles: {missing}")
+    return result
+
+
+def _runtime_config(payload: object) -> Dict[str, object]:
+    if not isinstance(payload, dict):
+        raise ValueError("Lexicon field 'runtime_config' must be an object.")
+    required = {
+        "digit_variants",
+        "insert_symbols",
+        "strong_insert_symbols",
+        "number_separators",
+        "amount_regex",
+        "url_regex",
+        "contact_number_regex",
+        "contact_split_number_regex",
+        "amount_unit_variants",
+        "amount_insert_symbols",
+        "contact_patterns",
+        "multi_keyword_special_replacements",
+        "placeholder_context_hints",
+        "default_context_hints",
+        "contact_action_hints",
+        "attack_profiles",
+        "attack_priority",
+        "mixed_attack_sequence",
+        "strong_mixed_attack_sequence",
+    }
+    missing = sorted(required.difference(payload))
+    if missing:
+        raise ValueError(f"AST lexicon runtime_config missing fields: {missing}")
+    return {
+        "digit_variants": _string_tuple_map(payload["digit_variants"], "runtime_config.digit_variants"),
+        "insert_symbols": _string_tuple(payload["insert_symbols"], "runtime_config.insert_symbols"),
+        "strong_insert_symbols": _string_tuple(payload["strong_insert_symbols"], "runtime_config.strong_insert_symbols"),
+        "number_separators": _string_tuple(payload["number_separators"], "runtime_config.number_separators"),
+        "amount_regex": str(payload["amount_regex"]),
+        "url_regex": str(payload["url_regex"]),
+        "contact_number_regex": str(payload["contact_number_regex"]),
+        "contact_split_number_regex": str(payload["contact_split_number_regex"]),
+        "amount_unit_variants": _string_tuple_map(payload["amount_unit_variants"], "runtime_config.amount_unit_variants"),
+        "amount_insert_symbols": _string_tuple(payload["amount_insert_symbols"], "runtime_config.amount_insert_symbols"),
+        "contact_patterns": _pattern_specs(payload["contact_patterns"], "runtime_config.contact_patterns"),
+        "multi_keyword_special_replacements": _special_replacements(
+            payload["multi_keyword_special_replacements"],
+            "runtime_config.multi_keyword_special_replacements",
+        ),
+        "placeholder_context_hints": _pair_list(
+            payload["placeholder_context_hints"],
+            "runtime_config.placeholder_context_hints",
+        ),
+        "default_context_hints": _string_tuple(payload["default_context_hints"], "runtime_config.default_context_hints"),
+        "contact_action_hints": _string_map(payload["contact_action_hints"], "runtime_config.contact_action_hints"),
+        "attack_profiles": _attack_profiles(payload["attack_profiles"], "runtime_config.attack_profiles"),
+        "attack_priority": _string_tuple(payload["attack_priority"], "runtime_config.attack_priority"),
+        "mixed_attack_sequence": _string_tuple(payload["mixed_attack_sequence"], "runtime_config.mixed_attack_sequence"),
+        "strong_mixed_attack_sequence": _string_tuple(
+            payload["strong_mixed_attack_sequence"],
+            "runtime_config.strong_mixed_attack_sequence",
+        ),
+    }
+
+
 def load_ast_lexicon(path: Path | str = DEFAULT_LEXICON_PATH) -> Dict[str, object]:
     """Load and validate the external AST lexicon.
 
@@ -113,6 +223,7 @@ def load_ast_lexicon(path: Path | str = DEFAULT_LEXICON_PATH) -> Dict[str, objec
         "default_contact_hints",
         "semantic_templates",
         "urgency_hints",
+        "runtime_config",
     }
     missing = sorted(required.difference(payload))
     if missing:
@@ -134,6 +245,7 @@ def load_ast_lexicon(path: Path | str = DEFAULT_LEXICON_PATH) -> Dict[str, objec
         "default_contact_hints": _string_tuple(payload["default_contact_hints"], "default_contact_hints"),
         "semantic_templates": _string_tuple(payload["semantic_templates"], "semantic_templates"),
         "urgency_hints": _string_tuple(payload["urgency_hints"], "urgency_hints"),
+        "runtime_config": _runtime_config(payload["runtime_config"]),
     }
 
 
@@ -141,6 +253,65 @@ def _terms_from_tuple_map(payload: Dict[str, Tuple[str, ...]]) -> Iterable[str]:
     for key, values in payload.items():
         yield key
         yield from values
+
+
+def _normalize_variant_map(
+    payload: Optional[Mapping[str, Sequence[str]]],
+    field_name: str,
+) -> Dict[str, Tuple[str, ...]]:
+    if not payload:
+        return {}
+    result: Dict[str, Tuple[str, ...]] = {}
+    for key, values in payload.items():
+        key_text = str(key).strip()
+        if not key_text:
+            raise ValueError(f"{field_name} contains an empty keyword.")
+        if isinstance(values, str):
+            raw_values = [values]
+        else:
+            raw_values = list(values)
+        cleaned = tuple(
+            str(value).strip()
+            for value in raw_values
+            if str(value).strip() and str(value).strip() != key_text
+        )
+        if cleaned:
+            result[key_text] = cleaned
+    return result
+
+
+def _merge_variant_maps(
+    base: Dict[str, Tuple[str, ...]],
+    extra: Optional[Mapping[str, Sequence[str]]],
+    field_name: str,
+) -> Dict[str, Tuple[str, ...]]:
+    merged: Dict[str, List[str]] = {key: list(values) for key, values in base.items()}
+    for key, values in _normalize_variant_map(extra, field_name).items():
+        bucket = merged.setdefault(key, [])
+        seen = set(bucket)
+        for value in values:
+            if value not in seen:
+                bucket.append(value)
+                seen.add(value)
+    return {key: tuple(values) for key, values in merged.items()}
+
+
+def register_jieba_terms(terms: Iterable[str], freq: int = 200000) -> None:
+    """Register runtime vocabulary with jieba for stable segmentation."""
+    if jieba is None:
+        return
+    for term in terms:
+        term = str(term).strip()
+        if (
+            len(term) < 2
+            or any(char.isspace() for char in term)
+            or "{" in term
+            or "}" in term
+            or term in _REGISTERED_JIEBA_TERMS
+        ):
+            continue
+        jieba.add_word(term, freq=freq)
+        _REGISTERED_JIEBA_TERMS.add(term)
 
 
 def ast_lexicon_terms(path: Path | str = DEFAULT_LEXICON_PATH) -> List[str]:
@@ -158,6 +329,25 @@ def ast_lexicon_terms(path: Path | str = DEFAULT_LEXICON_PATH) -> List[str]:
             terms.add(value)
     for field in ("default_benefits", "default_contact_hints", "semantic_templates", "urgency_hints"):
         terms.update(lexicon[field])
+    runtime = lexicon["runtime_config"]
+    terms.update(runtime["insert_symbols"])
+    terms.update(runtime["strong_insert_symbols"])
+    terms.update(runtime["number_separators"])
+    terms.update(runtime["amount_insert_symbols"])
+    terms.update(runtime["default_context_hints"])
+    terms.update(runtime["contact_action_hints"].keys())
+    terms.update(runtime["contact_action_hints"].values())
+    for values in runtime["digit_variants"].values():
+        terms.update(values)
+    for values in runtime["amount_unit_variants"].values():
+        terms.update(values)
+    for _, hint in runtime["placeholder_context_hints"]:
+        terms.add(hint)
+    for spec in runtime["contact_patterns"]:
+        for key in ("obfuscation_replacements", "split_replacements", "hint_replacements"):
+            terms.update(spec.get(key, ()))
+    for item in runtime["multi_keyword_special_replacements"].values():
+        terms.update(item["replacements"])
 
     cleaned = {
         term.strip()
@@ -175,8 +365,7 @@ def _ensure_jieba_lexicon_loaded() -> None:
     global _JIEBA_LEXICON_LOADED
     if jieba is None or _JIEBA_LEXICON_LOADED:
         return
-    for term in ast_lexicon_terms(DEFAULT_LEXICON_PATH):
-        jieba.add_word(term, freq=200000)
+    register_jieba_terms(ast_lexicon_terms(DEFAULT_LEXICON_PATH))
     _JIEBA_LEXICON_LOADED = True
 
 
@@ -207,35 +396,16 @@ class ChineseSpamTextAttacker:
     # in __init__, so dataset building, confidence search, and the web UI use
     # one auditable source of AST vocabulary.
 
-    DIGIT_VARIANTS: Dict[str, Sequence[str]] = {
-        "0": ("O", "o", "零"),
-        "1": ("l", "I", "壹"),
-        "2": ("Z", "贰"),
-        "3": ("E", "叁"),
-        "4": ("A", "肆"),
-        "5": ("S", "伍"),
-        "6": ("G", "陆"),
-        "7": ("T", "柒"),
-        "8": ("B", "捌"),
-        "9": ("g", "玖"),
-    }
-
-    CONTACT_PATTERNS: Sequence[Tuple[re.Pattern, str]] = (
-        (re.compile(r"(?i)(vx|v信|wx|wechat|WECHAT|微信|微 信|薇信|维信)"), "contact_wechat"),
-        (re.compile(r"(?i)(qq|扣扣|q号|Q Q)"), "contact_qq"),
-        (re.compile(r"(?i)(PHONE|CELLPHONE|HOTLINE)"), "contact_number"),
-        (re.compile(r"\d{5,}"), "contact_number"),
-    )
-
-    INSERT_SYMBOLS: Sequence[str] = (" ", "-", "_", ".", "*")
-    STRONG_INSERT_SYMBOLS: Sequence[str] = (" ", "-", "_", ".", "*", "·", "/", "丨", "+", "~")
-
     def __init__(
         self,
         seed: int = 42,
         max_char_replacements: int = 2,
         max_symbol_insertions: int = 2,
         lexicon_path: Path | str = DEFAULT_LEXICON_PATH,
+        phrase_variants: Optional[Mapping[str, Sequence[str]]] = None,
+        strong_phrase_variants: Optional[Mapping[str, Sequence[str]]] = None,
+        pinyin_abbreviations: Optional[Mapping[str, Sequence[str]]] = None,
+        char_variants: Optional[Mapping[str, Sequence[str]]] = None,
     ) -> None:
         self.seed = seed
         self.rng = random.Random(seed)
@@ -243,10 +413,20 @@ class ChineseSpamTextAttacker:
         self.max_symbol_insertions = max_symbol_insertions
         self.lexicon_path = Path(lexicon_path)
         lexicon = load_ast_lexicon(self.lexicon_path)
-        self.PHRASE_VARIANTS = lexicon["phrase_variants"]
-        self.STRONG_PHRASE_VARIANTS = lexicon["strong_phrase_variants"]
-        self.PINYIN_ABBREVIATIONS = lexicon["pinyin_abbreviations"]
-        self.CHAR_VARIANTS = lexicon["char_variants"]
+        runtime = lexicon["runtime_config"]
+        strong_extra = strong_phrase_variants if strong_phrase_variants is not None else phrase_variants
+        self.PHRASE_VARIANTS = _merge_variant_maps(lexicon["phrase_variants"], phrase_variants, "phrase_variants")
+        self.STRONG_PHRASE_VARIANTS = _merge_variant_maps(
+            lexicon["strong_phrase_variants"],
+            strong_extra,
+            "strong_phrase_variants",
+        )
+        self.PINYIN_ABBREVIATIONS = _merge_variant_maps(
+            lexicon["pinyin_abbreviations"],
+            pinyin_abbreviations,
+            "pinyin_abbreviations",
+        )
+        self.CHAR_VARIANTS = _merge_variant_maps(lexicon["char_variants"], char_variants, "char_variants")
         self.TRADITIONAL_VARIANTS = lexicon["traditional_variants"]
         self.MULTI_KEYWORD_OBFUSCATION_KEYWORDS = lexicon["multi_keyword_obfuscation_keywords"]
         self.AMOUNT_FALLBACKS = lexicon["amount_fallbacks"]
@@ -256,6 +436,28 @@ class ChineseSpamTextAttacker:
         self.DEFAULT_CONTACT_HINTS = lexicon["default_contact_hints"]
         self.SEMANTIC_TEMPLATES = lexicon["semantic_templates"]
         self.URGENCY_HINTS = lexicon["urgency_hints"]
+        self.DIGIT_VARIANTS = runtime["digit_variants"]
+        self.INSERT_SYMBOLS = runtime["insert_symbols"]
+        self.STRONG_INSERT_SYMBOLS = runtime["strong_insert_symbols"]
+        self.NUMBER_SEPARATORS = runtime["number_separators"]
+        self.AMOUNT_PATTERN = re.compile(runtime["amount_regex"])
+        self.URL_PATTERN = re.compile(runtime["url_regex"])
+        self.CONTACT_NUMBER_PATTERN = re.compile(runtime["contact_number_regex"])
+        self.CONTACT_SPLIT_NUMBER_PATTERN = re.compile(runtime["contact_split_number_regex"])
+        self.AMOUNT_UNIT_VARIANTS = runtime["amount_unit_variants"]
+        self.AMOUNT_INSERT_SYMBOLS = runtime["amount_insert_symbols"]
+        self.CONTACT_PATTERNS = [(re.compile(spec["pattern"]), spec) for spec in runtime["contact_patterns"]]
+        self.MULTI_KEYWORD_SPECIAL_REPLACEMENTS = runtime["multi_keyword_special_replacements"]
+        self.PLACEHOLDER_CONTEXT_HINTS = runtime["placeholder_context_hints"]
+        self.DEFAULT_CONTEXT_HINTS = runtime["default_context_hints"]
+        self.CONTACT_ACTION_HINTS = runtime["contact_action_hints"]
+        self.ATTACK_PROFILES = runtime["attack_profiles"]
+        self.ATTACK_PRIORITY = {attack_type: idx for idx, attack_type in enumerate(runtime["attack_priority"])}
+        self.MIXED_ATTACK_SEQUENCE = runtime["mixed_attack_sequence"]
+        self.STRONG_MIXED_ATTACK_SEQUENCE = runtime["strong_mixed_attack_sequence"]
+        register_jieba_terms(_terms_from_tuple_map(self.PHRASE_VARIANTS))
+        register_jieba_terms(_terms_from_tuple_map(self.STRONG_PHRASE_VARIANTS))
+        register_jieba_terms(_terms_from_tuple_map(self.PINYIN_ABBREVIATIONS))
 
     def lexicon_summary(self) -> Dict[str, int]:
         """Return coverage counts for audit scripts and reports."""
@@ -270,6 +472,8 @@ class ChineseSpamTextAttacker:
             "url_keyword_replacements": len(self.URL_KEYWORD_REPLACEMENTS),
             "benefit_hints": len(self.BENEFIT_HINTS),
             "semantic_templates": len(self.SEMANTIC_TEMPLATES),
+            "runtime_contact_patterns": len(self.CONTACT_PATTERNS),
+            "runtime_attack_profiles": len(self.ATTACK_PROFILES),
         }
 
     def generate(
@@ -305,17 +509,7 @@ class ChineseSpamTextAttacker:
 
         results = list(unique.values())
         if (strength or "mild").lower() in {"balanced", "strong"}:
-            priority = {
-                "semantic_rewrite": 0,
-                "strong_mixed": 1,
-                "pinyin_abbreviation": 2,
-                "multi_keyword_obfuscation": 3,
-                "contact_split": 4,
-                "amount_obfuscation": 5,
-                "url_obfuscation": 6,
-                "strong_phrase_variant": 7,
-            }
-            results.sort(key=lambda item: priority.get(item.attack_type, 20))
+            results.sort(key=lambda item: self.ATTACK_PRIORITY.get(item.attack_type, 20))
         else:
             self.rng.shuffle(results)
         return results[:max(0, max_variants)]
@@ -333,46 +527,17 @@ class ChineseSpamTextAttacker:
 
         strength = (strength or "mild").lower()
         if strength == "strong":
-            return (
-                "semantic_rewrite",
-                "strong_mixed",
-                "pinyin_abbreviation",
-                "contact_split",
-                "multi_keyword_obfuscation",
-                "url_obfuscation",
-                "amount_obfuscation",
-                "strong_phrase_variant",
-                *base,
-            )
+            return (*self.ATTACK_PROFILES["spam_strong_extra"], *base)
         if strength == "balanced":
-            return (
-                "pinyin_abbreviation",
-                "contact_split",
-                "multi_keyword_obfuscation",
-                "strong_phrase_variant",
-                *base,
-            )
+            return (*self.ATTACK_PROFILES["spam_balanced_extra"], *base)
         return base
 
     def default_attack_types(self, label: str) -> Sequence[AttackType]:
         if label == "spam":
-            return (
-                "phrase_variant",
-                "glyph_variant",
-                "phonetic_variant",
-                "symbol_insertion",
-                "traditional_variant",
-                "digit_letter_mix",
-                "contact_obfuscation",
-                "mixed",
-            )
-        return (
-            "symbol_insertion",
-            "traditional_variant",
-            "digit_letter_mix",
-        )
+            return self.ATTACK_PROFILES["spam_mild"]
+        return self.ATTACK_PROFILES["normal_mild"]
 
-    def apply_attack(self, text: str, attack_type: AttackType) -> Optional[AttackResult]:
+    def _handler_for_attack_type(self, attack_type: AttackType):
         handlers = {
             "phrase_variant": self._phrase_variant,
             "strong_phrase_variant": self._strong_phrase_variant,
@@ -394,6 +559,10 @@ class ChineseSpamTextAttacker:
         handler = handlers.get(attack_type)
         if handler is None:
             raise ValueError(f"Unsupported attack type: {attack_type}")
+        return handler
+
+    def apply_attack(self, text: str, attack_type: AttackType) -> Optional[AttackResult]:
+        handler = self._handler_for_attack_type(attack_type)
         attacked, operations = handler(text)
         if attacked == text:
             return None
@@ -474,8 +643,9 @@ class ChineseSpamTextAttacker:
                 continue
             symbol = self.rng.choice(tuple(self.STRONG_INSERT_SYMBOLS))
             replacement = symbol.join(list(key))
-            if key == "加微信" and self.rng.random() < 0.5:
-                replacement = self.rng.choice(("加 v/x", "加 w x", "+微丨信"))
+            special = self.MULTI_KEYWORD_SPECIAL_REPLACEMENTS.get(key)
+            if special and self.rng.random() < float(special["probability"]):
+                replacement = self.rng.choice(tuple(special["replacements"]))
             current = current.replace(key, replacement, 1)
             operations.append(f"{key}->{replacement}")
         return current, operations
@@ -491,7 +661,7 @@ class ChineseSpamTextAttacker:
         return "".join(chars), operations
 
     def _amount_obfuscation(self, text: str) -> Tuple[str, List[str]]:
-        match = re.search(r"\d+(?:\.\d+)?\s*(?:元|块|万|折|%)?", text)
+        match = self.AMOUNT_PATTERN.search(text)
         if match:
             value = match.group(0)
             replacement = self._obfuscate_amount(value)
@@ -521,17 +691,18 @@ class ChineseSpamTextAttacker:
         return "".join(chars), operations
 
     def _contact_obfuscation(self, text: str) -> Tuple[str, List[str]]:
-        for pattern, name in self.CONTACT_PATTERNS:
+        for pattern, spec in self.CONTACT_PATTERNS:
             match = pattern.search(text)
             if not match:
                 continue
             matched = match.group(0)
-            if name == "contact_wechat":
-                replacement = self.rng.choice(("薇信", "V信", "v 信", "vx"))
-            elif name == "contact_qq":
-                replacement = self.rng.choice(("扣扣", "q q", "Q号"))
-            else:
+            choices = spec.get("obfuscation_replacements")
+            if choices:
+                replacement = self.rng.choice(tuple(choices))
+            elif spec.get("number_obfuscation"):
                 replacement = self._obfuscate_number(matched)
+            else:
+                continue
             return (
                 text[: match.start()] + replacement + text[match.end() :],
                 [f"{matched}->{replacement}"],
@@ -539,12 +710,10 @@ class ChineseSpamTextAttacker:
         return text, []
 
     def _contact_split(self, text: str) -> Tuple[str, List[str]]:
-        replacements: Sequence[Tuple[re.Pattern, Sequence[str]]] = (
-            (re.compile(r"(?i)(微信|微 信|薇信|维信|vx|v信|wx|WECHAT)"), ("w x", "v/x", "微丨信", "薇 x", "wx")),
-            (re.compile(r"(?i)(QQ|qq|扣扣|q号|Q Q)"), ("Q/ Q", "扣 扣", "q鹅", "q/号")),
-            (re.compile(r"(?i)(PHONE|CELLPHONE|HOTLINE)"), ("tel.", "联络号", "专线", "号 码")),
-        )
-        for pattern, choices in replacements:
+        for pattern, spec in self.CONTACT_PATTERNS:
+            choices = spec.get("split_replacements")
+            if not choices:
+                continue
             match = pattern.search(text)
             if not match:
                 continue
@@ -552,7 +721,7 @@ class ChineseSpamTextAttacker:
             replacement = self.rng.choice(tuple(choices))
             return text[: match.start()] + replacement + text[match.end() :], [f"{matched}->{replacement}"]
 
-        match = re.search(r"\d{6,}", text)
+        match = self.CONTACT_SPLIT_NUMBER_PATTERN.search(text)
         if match:
             matched = match.group(0)
             replacement = self._group_number(matched)
@@ -560,7 +729,7 @@ class ChineseSpamTextAttacker:
         return text, []
 
     def _url_obfuscation(self, text: str) -> Tuple[str, List[str]]:
-        url_match = re.search(r"(?i)(https?://|www\.)[a-z0-9./?=&_%:-]+", text)
+        url_match = self.URL_PATTERN.search(text)
         if url_match:
             value = url_match.group(0)
             replacement = value.replace("http://", "hxxp://").replace("https://", "hxxps://")
@@ -590,7 +759,8 @@ class ChineseSpamTextAttacker:
     def _mixed_attack(self, text: str) -> Tuple[str, List[str]]:
         operations: List[str] = []
         current = text
-        for handler in (self._phrase_variant, self._digit_letter_mix, self._symbol_insertion):
+        for attack_type in self.MIXED_ATTACK_SEQUENCE:
+            handler = self._handler_for_attack_type(attack_type)
             current, ops = handler(current)
             operations.extend(ops)
         return current, operations
@@ -598,14 +768,8 @@ class ChineseSpamTextAttacker:
     def _strong_mixed_attack(self, text: str) -> Tuple[str, List[str]]:
         operations: List[str] = []
         current = text
-        handlers = (
-            self._strong_phrase_variant,
-            self._pinyin_abbreviation,
-            self._amount_obfuscation,
-            self._contact_split,
-            self._multi_keyword_obfuscation,
-        )
-        for handler in handlers:
+        for attack_type in self.STRONG_MIXED_ATTACK_SEQUENCE:
+            handler = self._handler_for_attack_type(attack_type)
             current, ops = handler(current)
             operations.extend(ops)
         if not operations:
@@ -617,7 +781,7 @@ class ChineseSpamTextAttacker:
             return value
         chars = list(value)
         idx = self.rng.randrange(1, len(chars) - 1)
-        chars.insert(idx, self.rng.choice(("-", " ", ".")))
+        chars.insert(idx, self.rng.choice(tuple(self.NUMBER_SEPARATORS)))
         return "".join(chars)
 
     def _group_number(self, value: str) -> str:
@@ -630,67 +794,42 @@ class ChineseSpamTextAttacker:
                 current = ""
         if current:
             groups.append(current)
-        return self.rng.choice((" ", "-", "." )).join(groups)
+        return self.rng.choice(tuple(self.NUMBER_SEPARATORS)).join(groups)
 
     def _obfuscate_amount(self, value: str) -> str:
         chars = []
         for ch in value:
             if ch.isdigit() and ch in self.DIGIT_VARIANTS and self.rng.random() < 0.55:
                 chars.append(self.rng.choice(tuple(self.DIGIT_VARIANTS[ch])))
-            elif ch == "元":
-                chars.append(self.rng.choice(("米", "圆", "rmb")))
-            elif ch == "折":
-                chars.append("zhe")
+            elif ch in self.AMOUNT_UNIT_VARIANTS:
+                chars.append(self.rng.choice(tuple(self.AMOUNT_UNIT_VARIANTS[ch])))
             else:
                 chars.append(ch)
         if len(chars) > 2 and self.rng.random() < 0.7:
             idx = self.rng.randrange(1, len(chars))
-            chars.insert(idx, self.rng.choice((".", "·", " ")))
+            chars.insert(idx, self.rng.choice(tuple(self.AMOUNT_INSERT_SYMBOLS)))
         return "".join(chars)
 
     def _extract_contact_hint(self, text: str) -> str:
-        if re.search(r"(?i)(微信|vx|wx|v信|薇信|微 信)", text):
-            return self.rng.choice(("w x", "v/x", "微丨信", "wx"))
-        if re.search(r"(?i)(WECHAT)", text):
-            return self.rng.choice(("w x", "v/x", "微丨信", "wx"))
-        if re.search(r"(?i)(qq|扣扣|q号)", text):
-            return self.rng.choice(("Q/ Q", "扣 扣", "q鹅"))
-        if re.search(r"(?i)(PHONE|CELLPHONE|HOTLINE)", text):
-            return self.rng.choice(("tel.", "联络号", "专线"))
-        match = re.search(r"\d{6,}", text)
+        for pattern, spec in self.CONTACT_PATTERNS:
+            choices = spec.get("hint_replacements")
+            if choices and pattern.search(text):
+                return self.rng.choice(tuple(choices))
+        match = self.CONTACT_SPLIT_NUMBER_PATTERN.search(text)
         if match:
             return self._group_number(match.group(0))
         return self.rng.choice(tuple(self.DEFAULT_CONTACT_HINTS))
 
     def _contact_action_hint(self, contact: str) -> str:
-        if contact == "头像":
-            return "看头像"
-        if contact == "小助手":
-            return "找小助手"
-        if contact == "入口":
-            return "从入口"
-        return contact
+        return self.CONTACT_ACTION_HINTS.get(contact, contact)
 
     def _extract_context_hint(self, text: str) -> str:
         candidates: List[str] = []
-        placeholder_context = (
-            ("BANK", "银行端"),
-            ("NAME", "专属客户"),
-            ("PLACE", "本地入口"),
-            ("URL", "落地入口"),
-            ("PHONE", "联络通道"),
-            ("CELLPHONE", "联络通道"),
-            ("HOTLINE", "专线通道"),
-            ("WECHAT", "私域入口"),
-            ("DIGIT", "校验位"),
-            ("go.10086", "掌厅入口"),
-            ("手机网", "掌厅入口"),
-        )
-        for key, hint in placeholder_context:
+        for key, hint in self.PLACEHOLDER_CONTEXT_HINTS:
             if key in text:
                 candidates.append(hint)
 
-        amount = re.search(r"\d+(?:\.\d+)?\s*(?:元|块|万|折|%)?", text)
+        amount = self.AMOUNT_PATTERN.search(text)
         if amount:
             candidates.append(f"{self._obfuscate_amount(amount.group(0))}档")
 
@@ -702,7 +841,7 @@ class ChineseSpamTextAttacker:
 
         if candidates:
             return self.rng.choice(tuple(candidates))
-        return self.rng.choice(("老客通道", "专属入口", "活动页", "校验页", "本地专场", "系统消息"))
+        return self.rng.choice(tuple(self.DEFAULT_CONTEXT_HINTS))
 
     def _extract_benefit_hint(self, text: str) -> str:
         for key, replacement in self.BENEFIT_HINTS:

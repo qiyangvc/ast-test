@@ -30,6 +30,7 @@ BATCH_SIZE="${BATCH_SIZE:-512}"
 CONFIDENCE_ATTACK_LIMIT="${CONFIDENCE_ATTACK_LIMIT:-0}"
 CONFIDENCE_ATTACK_STRENGTH="${CONFIDENCE_ATTACK_STRENGTH:-strong}"
 REVIEW_SAMPLE_SIZE="${REVIEW_SAMPLE_SIZE:-0}"
+DYNAMIC_VOCAB_TOP_K="${DYNAMIC_VOCAB_TOP_K:-80}"
 
 export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-$(nproc 2>/dev/null || echo 4)}"
@@ -100,14 +101,21 @@ fi
 
 build_mild_dataset() {
   echo "Building mild AST dataset and manifest..."
-  "${VENV_PY}" scripts/build_ast_dataset.py \
-    --input-dir tensorlayer_text_antispam=data/external/raw/tensorlayer_text_antispam/msglog \
-    --canonical-jsonl spam_messages_lr=data/external/canonical/spam_messages_lr.jsonl \
-    --canonical-jsonl fbs_sms_dataset=data/external/canonical/fbs_sms_dataset.jsonl \
-    --output-dir data/ast_experiment \
-    --ast-strength mild \
-    --max-variants-spam 2 \
+  BUILD_ARGS=(
+    "${VENV_PY}" scripts/build_ast_dataset.py
+    --input-dir tensorlayer_text_antispam=data/external/raw/tensorlayer_text_antispam/msglog
+    --canonical-jsonl spam_messages_lr=data/external/canonical/spam_messages_lr.jsonl
+    --canonical-jsonl fbs_sms_dataset=data/external/canonical/fbs_sms_dataset.jsonl
+    --output-dir data/ast_experiment
+    --ast-strength mild
+    --max-variants-spam 2
     --max-variants-normal 1
+    --dynamic-vocab-top-k "${DYNAMIC_VOCAB_TOP_K}"
+  )
+  if [[ "${NO_DYNAMIC_VOCAB:-0}" == "1" ]]; then
+    BUILD_ARGS+=(--no-dynamic-vocab)
+  fi
+  "${BUILD_ARGS[@]}"
 }
 
 if [[ "${SKIP_DATA_BUILD:-0}" != "1" ]]; then
@@ -139,9 +147,13 @@ case "${PROFILE}" in
       --confidence-attack-limit "${CONFIDENCE_ATTACK_LIMIT}"
       --confidence-attack-strength "${CONFIDENCE_ATTACK_STRENGTH}"
       --review-sample-size "${REVIEW_SAMPLE_SIZE}"
+      --dynamic-vocab-top-k "${DYNAMIC_VOCAB_TOP_K}"
     )
     if [[ "${SKIP_DATA_BUILD:-0}" == "1" ]]; then
       TRAIN_CMD+=(--skip-build)
+    fi
+    if [[ "${NO_DYNAMIC_VOCAB:-0}" == "1" ]]; then
+      TRAIN_CMD+=(--no-dynamic-vocab)
     fi
     ;;
   mild)

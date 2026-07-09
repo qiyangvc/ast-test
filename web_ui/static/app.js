@@ -83,6 +83,9 @@ function renderMetrics() {
           <td>${row.model}</td>
           <td>${fmt(row.clean_accuracy)}</td>
           <td>${fmt(row.ast_accuracy)}</td>
+          <td>${fmt(row.ast_spam_precision)}</td>
+          <td>${fmt(row.ast_spam_recall)}</td>
+          <td>${fmt(row.ast_spam_f1)}</td>
           <td>${fmt(row.robust_drop)}</td>
           <td>${fmt(row.uci_accuracy)}</td>
         </tr>

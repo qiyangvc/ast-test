@@ -19,7 +19,7 @@ import sys
 
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.adversarial_text import ChineseSpamTextAttacker, DEFAULT_LEXICON_PATH
+from src.adversarial_text import ChineseSpamTextAttacker, DEFAULT_LEXICON_PATH, ast_lexicon_terms
 from src.ast_dataset import TextRecord, load_ast_jsonl
 
 
@@ -32,7 +32,7 @@ def load_clean_records(dataset_dir: Path) -> List[TextRecord]:
 
 
 def lexicon_keys(attacker: ChineseSpamTextAttacker) -> List[str]:
-    terms = set()
+    terms = set(ast_lexicon_terms(attacker.lexicon_path))
     terms.update(attacker.PHRASE_VARIANTS)
     terms.update(attacker.STRONG_PHRASE_VARIANTS)
     terms.update(attacker.PINYIN_ABBREVIATIONS)

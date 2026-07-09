@@ -767,5 +767,136 @@
     "仅保留当前批次",
     "超时不再补发",
     "页面即将下线"
-  ]
+  ],
+  "runtime_config": {
+    "digit_variants": {
+      "0": ["O", "o", "零"],
+      "1": ["l", "I", "壹"],
+      "2": ["Z", "贰"],
+      "3": ["E", "叁"],
+      "4": ["A", "肆"],
+      "5": ["S", "伍"],
+      "6": ["G", "陆"],
+      "7": ["T", "柒"],
+      "8": ["B", "捌"],
+      "9": ["g", "玖"]
+    },
+    "insert_symbols": [" ", "-", "_", ".", "*"],
+    "strong_insert_symbols": [" ", "-", "_", ".", "*", "·", "/", "丨", "+", "~"],
+    "number_separators": ["-", " ", "."],
+    "amount_regex": "\\d+(?:\\.\\d+)?\\s*(?:元|块|万|折|%)?",
+    "url_regex": "(?i)(https?://|www\\.)[a-z0-9./?=&_%:-]+",
+    "contact_number_regex": "\\d{5,}",
+    "contact_split_number_regex": "\\d{6,}",
+    "amount_unit_variants": {
+      "元": ["米", "圆", "rmb"],
+      "折": ["zhe"]
+    },
+    "amount_insert_symbols": [".", "·", " "],
+    "contact_patterns": [
+      {
+        "name": "contact_wechat",
+        "pattern": "(?i)(vx|v信|wx|wechat|WECHAT|微信|微 信|薇信|维信)",
+        "obfuscation_replacements": ["薇信", "V信", "v 信", "vx"],
+        "split_replacements": ["w x", "v/x", "微丨信", "薇 x", "wx"],
+        "hint_replacements": ["w x", "v/x", "微丨信", "wx"]
+      },
+      {
+        "name": "contact_qq",
+        "pattern": "(?i)(qq|扣扣|q号|Q Q)",
+        "obfuscation_replacements": ["扣扣", "q q", "Q号"],
+        "split_replacements": ["Q/ Q", "扣 扣", "q鹅", "q/号"],
+        "hint_replacements": ["Q/ Q", "扣 扣", "q鹅"]
+      },
+      {
+        "name": "contact_placeholder_phone",
+        "pattern": "(?i)(PHONE|CELLPHONE|HOTLINE)",
+        "obfuscation_replacements": ["tel.", "联络号", "专线", "号 码"],
+        "split_replacements": ["tel.", "联络号", "专线", "号 码"],
+        "hint_replacements": ["tel.", "联络号", "专线"]
+      },
+      {
+        "name": "contact_number",
+        "pattern": "\\d{5,}",
+        "number_obfuscation": true
+      }
+    ],
+    "multi_keyword_special_replacements": [
+      {
+        "keyword": "加微信",
+        "probability": 0.5,
+        "replacements": ["加 v/x", "加 w x", "+微丨信"]
+      }
+    ],
+    "placeholder_context_hints": [
+      ["BANK", "银行端"],
+      ["NAME", "专属客户"],
+      ["PLACE", "本地入口"],
+      ["URL", "落地入口"],
+      ["PHONE", "联络通道"],
+      ["CELLPHONE", "联络通道"],
+      ["HOTLINE", "专线通道"],
+      ["WECHAT", "私域入口"],
+      ["DIGIT", "校验位"],
+      ["go.10086", "掌厅入口"],
+      ["手机网", "掌厅入口"]
+    ],
+    "default_context_hints": ["老客通道", "专属入口", "活动页", "校验页", "本地专场", "系统消息"],
+    "contact_action_hints": {
+      "头像": "看头像",
+      "小助手": "找小助手",
+      "入口": "从入口"
+    },
+    "attack_profiles": {
+      "spam_mild": [
+        "phrase_variant",
+        "glyph_variant",
+        "phonetic_variant",
+        "symbol_insertion",
+        "traditional_variant",
+        "digit_letter_mix",
+        "contact_obfuscation",
+        "mixed"
+      ],
+      "normal_mild": [
+        "symbol_insertion",
+        "traditional_variant",
+        "digit_letter_mix"
+      ],
+      "spam_balanced_extra": [
+        "pinyin_abbreviation",
+        "contact_split",
+        "multi_keyword_obfuscation",
+        "strong_phrase_variant"
+      ],
+      "spam_strong_extra": [
+        "semantic_rewrite",
+        "strong_mixed",
+        "pinyin_abbreviation",
+        "contact_split",
+        "multi_keyword_obfuscation",
+        "url_obfuscation",
+        "amount_obfuscation",
+        "strong_phrase_variant"
+      ]
+    },
+    "attack_priority": [
+      "semantic_rewrite",
+      "strong_mixed",
+      "pinyin_abbreviation",
+      "multi_keyword_obfuscation",
+      "contact_split",
+      "amount_obfuscation",
+      "url_obfuscation",
+      "strong_phrase_variant"
+    ],
+    "mixed_attack_sequence": ["phrase_variant", "digit_letter_mix", "symbol_insertion"],
+    "strong_mixed_attack_sequence": [
+      "strong_phrase_variant",
+      "pinyin_abbreviation",
+      "amount_obfuscation",
+      "contact_split",
+      "multi_keyword_obfuscation"
+    ]
+  }
 }

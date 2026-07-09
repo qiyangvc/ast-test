@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from src.adversarial_text import ChineseSpamTextAttacker, compact_segmented_text, segment_for_project
+from src.ast_vocabulary import build_dynamic_attack_vocab, summarize_vocab
 
 
 LABEL_TO_PROJECT_ID = {
@@ -357,8 +358,14 @@ def build_ast_dataset(
     max_variants_spam: int = 2,
     max_variants_normal: int = 1,
     ast_strength: str = "mild",
+    use_dynamic_vocab: bool = True,
+    dynamic_vocab_top_k: int = 80,
 ) -> BuildStats:
-    """Build a full clean/AST dataset directory without training models."""
+    """Build a full clean/AST dataset directory without training models.
+
+    Dynamic AST vocabulary is mined from the training split only, then merged
+    into the fixed external lexicon by ``ChineseSpamTextAttacker``.
+    """
     output_dir = Path(output_dir)
     all_records: List[TextRecord] = []
 
@@ -371,7 +378,21 @@ def build_ast_dataset(
     kept_records, duplicates, conflicts = deduplicate_records(all_records)
     splits = stratified_split(kept_records, train_ratio, val_ratio, test_ratio, seed=seed)
 
-    attacker = ChineseSpamTextAttacker(seed=seed)
+    dynamic_vocab: Dict[str, List[str]] = {}
+    if use_dynamic_vocab:
+        dynamic_vocab = build_dynamic_attack_vocab(
+            splits["train"],
+            w2v_path=None,
+            top_k=dynamic_vocab_top_k,
+        )
+        print("Dynamic AST vocabulary built from train split.")
+        print(json.dumps(summarize_vocab(dynamic_vocab), ensure_ascii=False, indent=2))
+
+    attacker = ChineseSpamTextAttacker(
+        seed=seed,
+        phrase_variants=dynamic_vocab,
+        strong_phrase_variants=dynamic_vocab,
+    )
     ast_splits = {
         split: generate_ast_records(
             records,
@@ -420,6 +441,18 @@ def build_ast_dataset(
         "max_variants_spam": max_variants_spam,
         "max_variants_normal": max_variants_normal,
         "ast_strength": ast_strength,
+        "use_dynamic_vocab": use_dynamic_vocab,
+        "dynamic_vocab_top_k": dynamic_vocab_top_k,
+        "dynamic_vocab_summary": summarize_vocab(dynamic_vocab) if dynamic_vocab else {"n_keywords": 0, "n_candidates": 0},
     }
     write_manifest(output_dir / "manifest.json", stats, settings)
+    if dynamic_vocab:
+        (output_dir / "dynamic_vocab.json").write_text(
+            json.dumps(dynamic_vocab, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+    else:
+        stale_vocab = output_dir / "dynamic_vocab.json"
+        if stale_vocab.exists():
+            stale_vocab.unlink()
     return stats

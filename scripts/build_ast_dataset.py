@@ -56,6 +56,17 @@ def main() -> None:
         default=cfg.get("ast_strength", "mild"),
         help="Text-level AST perturbation profile. Existing full results use mild.",
     )
+    parser.add_argument(
+        "--dynamic-vocab-top-k",
+        type=int,
+        default=cfg.get("dynamic_vocab_top_k", 80),
+        help="Number of spam-specific keywords mined from the train split for dynamic AST vocabulary.",
+    )
+    parser.add_argument(
+        "--no-dynamic-vocab",
+        action="store_true",
+        help="Disable train-split dynamic AST vocabulary mining for ablation runs.",
+    )
     args = parser.parse_args()
 
     input_dirs = [parse_source_path(item) for item in args.input_dir]
@@ -76,6 +87,8 @@ def main() -> None:
         max_variants_spam=args.max_variants_spam,
         max_variants_normal=args.max_variants_normal,
         ast_strength=args.ast_strength,
+        use_dynamic_vocab=not args.no_dynamic_vocab,
+        dynamic_vocab_top_k=args.dynamic_vocab_top_k,
     )
 
     print("AST dataset build completed.")
@@ -84,6 +97,9 @@ def main() -> None:
     print(f"Dropped duplicates: {stats.dropped_duplicates}")
     print(f"Dropped conflicting labels: {stats.dropped_conflicting_labels}")
     print(f"AST strength: {args.ast_strength}")
+    print(f"Dynamic vocab: {'disabled' if args.no_dynamic_vocab else 'enabled'}")
+    if not args.no_dynamic_vocab:
+        print(f"Dynamic vocab top_k: {args.dynamic_vocab_top_k}")
     print(f"Output: {Path(args.output_dir).expanduser()}")
 
 

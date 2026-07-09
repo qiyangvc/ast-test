@@ -37,6 +37,7 @@ class SubmissionUIHandler(BaseHTTPRequestHandler):
                 {
                     "models": self.service.available_models(),
                     "metrics": self.service.metrics_summary(),
+                    "dynamic_vocab": self.service.dynamic_vocab_summary(),
                     "output_dir": str(self.service.output_dir),
                 }
             )
