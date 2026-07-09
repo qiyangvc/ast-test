@@ -13,9 +13,11 @@
 - 外部数据下载与 canonical JSONL 标准化。
 - clean 数据去重、冲突标签剔除、分层切分。
 - mild AST 与 strong AST 数据构建。
+- AST 词库外置为独立 JSON，并补充词库覆盖率审计脚本。
 - Word2Vec 真实训练。
 - MLP、TextCNN、BiLSTM 三类模型真实训练。
-- `baseline`、`text_ast`、`embedding_fgm`、`text_ast_fgm` 四组实验。
+- 已补充可重训的 BiLSTM-Attention、Focal Loss 变体和 soft voting 模型集成代码。
+- `baseline`、`text_ast`、`embedding_fgm`、`text_ast_fgm` 四组核心实验；扩展矩阵支持 8 组 mode。
 - clean test、AST test、UCI 英文外部测试。
 - 按攻击类型统计 AST 指标。
 - 基于模型置信度搜索的攻击评估。
@@ -63,6 +65,71 @@ clean 原始数据
 
 这样避免同源 clean 样本和 AST 变体同时进入训练与测试。
 
+AST 关键词、强扰动短语、拼音缩写、多关键词扰动项和语义改写提示词已外置到 `lexicons/chinese_spam_ast_lexicon.json`。最近一次只读审计显示：
+
+```text
+phrase_variants: 180
+strong_phrase_variants: 84
+pinyin_abbreviations: 53
+multi_keyword_obfuscation_keywords: 166
+semantic_templates: 20
+spam lexicon coverage: 0.9191
+sampled strong-AST generation rate: 1.0000
+```
+
+该词库同时被 AST 数据构建、confidence-search、图形化界面和 jieba 分词入口使用，避免训练/演示/审计规则不一致。
+
+审计命令：
+
+```bash
+.venv_submit/bin/python scripts/audit_ast_lexicon.py \
+  --dataset-dir data/ast_experiment_strong \
+  --sample-size 1000 \
+  --strength strong \
+  --out output/ast_lexicon_audit_20260708.json
+```
+
+补充数据审计：
+
+```bash
+.venv_submit/bin/python scripts/audit_data_sources.py \
+  --dataset-dir data/ast_experiment_strong \
+  --out output/data_source_audit_20260708.json
+
+.venv_submit/bin/python scripts/audit_attack_candidates.py \
+  --dataset-dir data/ast_experiment_strong \
+  --sample-size 200 \
+  --seed-count 4 \
+  --out output/attack_candidate_audit_20260708_after_semantic.json
+
+.venv_submit/bin/python scripts/audit_ast_quality.py \
+  --dataset-dir data/ast_experiment_strong \
+  --out output/ast_quality_audit_20260708.json \
+  --review-jsonl output/ast_quality_suspicious_20260708.jsonl
+
+.venv_submit/bin/python scripts/audit_vocab_oov.py \
+  --dataset-dir data/ast_experiment_strong \
+  --output-dir output/submission_strong_ast_20260706_full \
+  --out output/vocab_oov_audit_20260708.json
+```
+
+审计结论：
+
+```text
+external canonical: 49,359 条，spam 30,792，normal 18,567
+strong train_clean_ast: 111,039
+strong test_clean: 7,913
+strong test_ast: 23,808
+clean split overlap: 0
+AST parent_id mismatch: 0
+strong candidate generation rate: 1.0000
+avg unique candidates per sampled spam text: 26.00
+semantic rewrite quick uniqueness: 994 / 1000
+text_ast_fgm vocab OOV: train_clean_ast 0.0192, test_ast 0.0520, UCI 0.2626
+```
+
+质量审计额外发现：旧 strong AST 文件约 16.4% 样本被程序标记为长度异常，主要来自旧语义改写模板过短或多条原文坍缩到同一模板。本轮已扩展语义模板到 20 条、增加 `{context}` 槽位，并输出 `output/ast_quality_suspicious_20260708.jsonl` 作为人工复核清单。该修改不改变旧训练产物，最终采用时需要重建 AST 数据集并重跑训练/评估。
+
 数据规模：
 
 ```text
@@ -100,6 +167,19 @@ Max vocabulary: 50,000
 FGM epsilon: 0.5
 ```
 
+为贴近旧 PPT 中的方法对照，代码已支持扩展矩阵：
+
+```text
+Classifier: MLP / TextCNN / BiLSTM / BiLSTM-Attention
+Modes:
+  baseline / focal
+  text_ast / text_ast_focal
+  embedding_fgm / embedding_fgm_focal
+  text_ast_fgm / text_ast_fgm_focal
+Ensemble: ensemble_vote, probability soft voting
+Focal gamma: 2.0
+```
+
 完整命令：
 
 ```bash
@@ -121,6 +201,27 @@ strong AST 完整命令：
 .venv_submit/bin/python scripts/run_strong_ast_experiment.py \
   --dataset-dir data/ast_experiment_strong \
   --output-dir output/submission_strong_ast_20260706_full
+```
+
+扩展矩阵重训命令：
+
+```bash
+.venv_submit/bin/python scripts/submission_pipeline.py \
+  --full-matrix \
+  --output-dir output/submission_full_matrix \
+  --vector-size 200 \
+  --max-vocab 50000 \
+  --max-len 64 \
+  --w2v-epochs 20 \
+  --clf-epochs 10 \
+  --batch-size 512 \
+  --confidence-attack-limit 0 \
+  --review-sample-size 0
+
+.venv_submit/bin/python scripts/run_strong_ast_experiment.py \
+  --full-matrix \
+  --dataset-dir data/ast_experiment_strong \
+  --output-dir output/submission_strong_full_matrix
 ```
 
 ## Mild AST 结果
@@ -234,6 +335,20 @@ output/submission_strong_ast_20260706_full/
 
 `data/` 和 `output/` 被 `.gitignore` 忽略，提交作业时如需附带训练产物，需要额外打包。
 
+## 重要说明
+
+当前表格中的 mild/strong 训练指标来自已完成的默认矩阵训练产物。若继续使用本次扩展后的外部 AST 词库，或将 Focal Loss、BiLSTM-Attention、`ensemble_vote` 作为最终实验版本，应重新执行：
+
+```text
+1. rebuild AST dataset
+2. train Word2Vec
+3. train MLP/TextCNN/BiLSTM/BiLSTM-Attention under the full matrix when needed
+4. run clean / AST / UCI / cross-perturbation evaluation
+5. rerun confidence-search attack and AST quality review
+```
+
+没有重新跑完上述流程前，不能把旧指标称为“扩展词库后的最终指标”。
+
 ## 图形化测试程序
 
 ```bash
@@ -243,11 +358,11 @@ output/submission_strong_ast_20260706_full/
   --port 7860
 ```
 
-浏览器打开 `http://127.0.0.1:7860` 后，可以进行单条文本预测、置信度展示、AST 候选搜索、12 个模型横向对比和完整指标查看。
+浏览器打开 `http://127.0.0.1:7860` 后，可以进行单条文本预测、置信度展示、AST 候选搜索、模型横向对比和完整指标查看。若加载扩展矩阵输出目录，界面会自动显示 `bilstm_attn` 和 `ensemble_vote`。
 
-## 可进一步创新但本轮未修改
+## 可进一步创新
 
-为避免破坏当前已完成实验的可复现性，以下方向只作为报告未来工作，不在本轮改代码：
+Focal Loss、BiLSTM-Attention 和 soft voting 集成已经补进代码。为避免继续扩大重训范围，以下方向只作为报告未来工作：
 
 - 更强黑盒搜索：beam search、遗传算法或贝叶斯优化替代当前候选枚举。
 - 语义一致性约束：加入句向量相似度或 NLI 过滤，减少 AST 语义漂移。

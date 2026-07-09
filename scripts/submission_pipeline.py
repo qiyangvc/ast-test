@@ -20,6 +20,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from gensim.models import Word2Vec
 from huggingface_hub import HfApi, hf_hub_download
 from sklearn.metrics import classification_report, confusion_matrix
@@ -38,17 +39,51 @@ from src.ast_metrics import binary_metrics, robustness_metrics, write_metrics_js
 
 MODE_TRAIN_SPLIT = {
     "baseline": "train_clean",
+    "focal": "train_clean",
     "text_ast": "train_clean_ast",
+    "text_ast_focal": "train_clean_ast",
     "embedding_fgm": "train_clean",
+    "embedding_fgm_focal": "train_clean",
     "text_ast_fgm": "train_clean_ast",
+    "text_ast_fgm_focal": "train_clean_ast",
 }
 
 MODE_USES_FGM = {
     "baseline": False,
+    "focal": False,
     "text_ast": False,
+    "text_ast_focal": False,
     "embedding_fgm": True,
+    "embedding_fgm_focal": True,
     "text_ast_fgm": True,
+    "text_ast_fgm_focal": True,
 }
+
+MODE_USES_FOCAL = {
+    "baseline": False,
+    "focal": True,
+    "text_ast": False,
+    "text_ast_focal": True,
+    "embedding_fgm": False,
+    "embedding_fgm_focal": True,
+    "text_ast_fgm": False,
+    "text_ast_fgm_focal": True,
+}
+
+DEFAULT_MODES = ["baseline", "text_ast", "embedding_fgm", "text_ast_fgm"]
+FULL_MODES = [
+    "baseline",
+    "focal",
+    "text_ast",
+    "text_ast_focal",
+    "embedding_fgm",
+    "embedding_fgm_focal",
+    "text_ast_fgm",
+    "text_ast_fgm_focal",
+]
+DEFAULT_MODELS = ["mlp", "cnn", "rnn"]
+FULL_MODELS = ["mlp", "cnn", "rnn", "bilstm_attn"]
+DEFAULT_ENSEMBLE_MODELS = ["mlp", "cnn", "rnn", "bilstm_attn"]
 
 
 @dataclass
@@ -65,10 +100,13 @@ class RunConfig:
     batch_size: int
     seed: int
     fgm_epsilon: float
+    focal_gamma: float
     learning_rate: float
     confidence_attack_limit: int
     confidence_attack_strength: str
     review_sample_size: int
+    run_ensemble: bool
+    ensemble_models: List[str]
 
 
 def set_seed(seed: int) -> None:
@@ -216,6 +254,35 @@ class RNNClassifierTorch(nn.Module):
         return self.fc(self.dropout(pooled))
 
 
+class BiLSTMAttentionClassifierTorch(nn.Module):
+    def __init__(self, embedding_matrix: np.ndarray, hidden: int = 64, dropout: float = 0.3):
+        super().__init__()
+        emb_dim = embedding_matrix.shape[1]
+        self.embedding = nn.Embedding.from_pretrained(torch.tensor(embedding_matrix), freeze=False, padding_idx=0)
+        self.lstm = nn.LSTM(
+            emb_dim,
+            hidden,
+            batch_first=True,
+            bidirectional=True,
+            dropout=0.0,
+        )
+        self.attention = nn.Linear(hidden * 2, 1)
+        self.dropout = nn.Dropout(dropout)
+        self.fc = nn.Linear(hidden * 2, 2)
+
+    def forward(self, ids: torch.Tensor):
+        return self.forward_embeds(ids, self.embedding(ids))
+
+    def forward_embeds(self, ids: torch.Tensor, embeds: torch.Tensor):
+        out, _ = self.lstm(embeds)
+        mask = ids != 0
+        scores = self.attention(torch.tanh(out)).squeeze(-1)
+        scores = scores.masked_fill(~mask, -1e9)
+        weights = torch.softmax(scores, dim=1).unsqueeze(-1)
+        pooled = (out * weights).sum(dim=1)
+        return self.fc(self.dropout(pooled))
+
+
 def make_model(model_name: str, embedding_matrix: np.ndarray) -> nn.Module:
     if model_name == "mlp":
         return MLPClassifierTorch(embedding_matrix)
@@ -223,6 +290,8 @@ def make_model(model_name: str, embedding_matrix: np.ndarray) -> nn.Module:
         return CNNClassifierTorch(embedding_matrix)
     if model_name == "rnn":
         return RNNClassifierTorch(embedding_matrix)
+    if model_name in {"bilstm_attn", "bilstm_attention", "attention"}:
+        return BiLSTMAttentionClassifierTorch(embedding_matrix)
     raise ValueError(f"Unsupported model: {model_name}")
 
 
@@ -233,6 +302,33 @@ def class_weights(y: np.ndarray) -> torch.Tensor:
     return torch.tensor(weights, dtype=torch.float32)
 
 
+class FocalLoss(nn.Module):
+    def __init__(self, alpha: Optional[torch.Tensor] = None, gamma: float = 2.0):
+        super().__init__()
+        self.gamma = float(gamma)
+        if alpha is not None:
+            self.register_buffer("alpha", alpha.float())
+        else:
+            self.alpha = None
+
+    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        log_probs = F.log_softmax(logits, dim=1)
+        probs = log_probs.exp()
+        target_log_probs = log_probs.gather(1, targets.unsqueeze(1)).squeeze(1)
+        target_probs = probs.gather(1, targets.unsqueeze(1)).squeeze(1)
+        loss = -((1.0 - target_probs).clamp(min=1e-8) ** self.gamma) * target_log_probs
+        if self.alpha is not None:
+            loss = loss * self.alpha.gather(0, targets)
+        return loss.mean()
+
+
+def make_criterion(train_y: np.ndarray, cfg: RunConfig, uses_focal: bool, device: torch.device) -> nn.Module:
+    weights = class_weights(train_y).to(device)
+    if uses_focal:
+        return FocalLoss(alpha=weights, gamma=cfg.focal_gamma).to(device)
+    return nn.CrossEntropyLoss(weight=weights)
+
+
 def train_classifier(
     model: nn.Module,
     train_x: np.ndarray,
@@ -241,6 +337,7 @@ def train_classifier(
     val_y: np.ndarray,
     cfg: RunConfig,
     uses_fgm: bool,
+    uses_focal: bool,
     model_path: Path,
     history_path: Path,
 ) -> Dict[str, List[float]]:
@@ -250,8 +347,7 @@ def train_classifier(
 
     device = torch.device("cpu")
     model.to(device)
-    weights = class_weights(train_y).to(device)
-    criterion = nn.CrossEntropyLoss(weight=weights)
+    criterion = make_criterion(train_y, cfg, uses_focal, device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.learning_rate, weight_decay=1e-4)
 
     train_ds = TensorDataset(torch.tensor(train_x), torch.tensor(train_y))
@@ -346,6 +442,17 @@ def predict_model(model: nn.Module, x: np.ndarray, batch_size: int):
     return np.concatenate(preds), np.vstack(probs)
 
 
+def predict_ensemble(models: Sequence[nn.Module], x: np.ndarray, batch_size: int):
+    if not models:
+        raise ValueError("Ensemble prediction requires at least one model.")
+    prob_items = []
+    for model in models:
+        _, prob = predict_model(model, x, batch_size)
+        prob_items.append(prob)
+    avg_prob = np.mean(np.stack(prob_items, axis=0), axis=0)
+    return avg_prob.argmax(axis=1), avg_prob
+
+
 def evaluate_records(
     model: nn.Module,
     records: Sequence[TextRecord],
@@ -354,6 +461,21 @@ def evaluate_records(
 ):
     x, y = vectorize_records(records, word2idx, cfg.max_len)
     pred, prob = predict_model(model, x, cfg.batch_size)
+    return {
+        "metrics": asdict(binary_metrics(y, pred)),
+        "classification_report": classification_report(y, pred, digits=4, output_dict=True, zero_division=0),
+        "confusion_matrix": confusion_matrix(y, pred, labels=[0, 1]).astype(int).tolist(),
+    }, pred, prob
+
+
+def evaluate_ensemble_records(
+    models: Sequence[nn.Module],
+    records: Sequence[TextRecord],
+    word2idx: Dict[str, int],
+    cfg: RunConfig,
+):
+    x, y = vectorize_records(records, word2idx, cfg.max_len)
+    pred, prob = predict_ensemble(models, x, cfg.batch_size)
     return {
         "metrics": asdict(binary_metrics(y, pred)),
         "classification_report": classification_report(y, pred, digits=4, output_dict=True, zero_division=0),
@@ -380,6 +502,7 @@ def load_all_splits(dataset_dir: Path):
 def train_and_evaluate(cfg: RunConfig) -> Dict[str, object]:
     set_seed(cfg.seed)
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
+    validate_modes_and_models(cfg.modes, cfg.models)
     records = load_all_splits(cfg.dataset_dir)
     external_uci_path = PROJECT_ROOT / "data/external/canonical/uci_sms_spam_collection.jsonl"
     external_uci = load_ast_jsonl(external_uci_path) if external_uci_path.exists() else []
@@ -402,6 +525,7 @@ def train_and_evaluate(cfg: RunConfig) -> Dict[str, object]:
         train_x, train_y = vectorize_records(records[train_split], word2idx, cfg.max_len)
         val_x, val_y = vectorize_records(records["val_clean"], word2idx, cfg.max_len)
         mode_result = {}
+        trained_models: Dict[str, nn.Module] = {}
 
         for model_name in cfg.models:
             print(f"\n=== Training {mode}/{model_name} ===")
@@ -415,9 +539,11 @@ def train_and_evaluate(cfg: RunConfig) -> Dict[str, object]:
                 val_y,
                 cfg,
                 uses_fgm=MODE_USES_FGM[mode],
+                uses_focal=MODE_USES_FOCAL[mode],
                 model_path=model_dir / f"{model_name}.pt",
                 history_path=model_dir / f"{model_name}_history.json",
             )
+            trained_models[model_name] = model
 
             clean_eval, _, _ = evaluate_records(model, records["test_clean"], word2idx, cfg)
             ast_eval, ast_pred, _ = evaluate_records(model, records["test_ast"], word2idx, cfg)
@@ -450,6 +576,42 @@ def train_and_evaluate(cfg: RunConfig) -> Dict[str, object]:
                 },
             )
 
+        if cfg.run_ensemble:
+            ensemble_members = [name for name in cfg.ensemble_models if name in trained_models]
+            if len(ensemble_members) >= 2:
+                print(f"\n=== Evaluating {mode}/ensemble_vote ({', '.join(ensemble_members)}) ===")
+                ensemble_models = [trained_models[name] for name in ensemble_members]
+                clean_eval, _, _ = evaluate_ensemble_records(ensemble_models, records["test_clean"], word2idx, cfg)
+                ast_eval, ast_pred, _ = evaluate_ensemble_records(ensemble_models, records["test_ast"], word2idx, cfg)
+                clean_metrics_dc = metrics_dict_to_dataclass(clean_eval["metrics"])
+                ast_metrics_dc = metrics_dict_to_dataclass(ast_eval["metrics"])
+                robust = asdict(robustness_metrics(clean_metrics_dc, ast_metrics_dc))
+                by_attack = evaluate_by_attack(records["test_ast"], ast_pred)
+                uci_eval = None
+                if external_uci:
+                    uci_eval, _, _ = evaluate_ensemble_records(ensemble_models, external_uci, word2idx, cfg)
+
+                mode_result["ensemble_vote"] = {
+                    "ensemble_members": ensemble_members,
+                    "clean": clean_eval,
+                    "ast": ast_eval,
+                    "robustness": robust,
+                    "by_attack": by_attack,
+                    "uci_en": uci_eval,
+                }
+
+                write_metrics_json(
+                    cfg.output_dir / "metrics" / mode / "ensemble_vote.json",
+                    {
+                        "ensemble_members": ensemble_members,
+                        "clean": clean_metrics_dc,
+                        "ast": ast_metrics_dc,
+                        "robustness": robustness_metrics(clean_metrics_dc, ast_metrics_dc),
+                        "by_attack": {k: metrics_dict_to_dataclass(v) for k, v in by_attack.items()},
+                        "uci_en": uci_eval,
+                    },
+                )
+
         results["runs"][mode] = mode_result
 
     (cfg.output_dir / "metrics").mkdir(parents=True, exist_ok=True)
@@ -464,6 +626,16 @@ def metrics_dict_to_dataclass(metrics: Dict[str, object]):
     from src.ast_metrics import BinaryClassificationMetrics
 
     return BinaryClassificationMetrics(**metrics)
+
+
+def validate_modes_and_models(modes: Sequence[str], models: Sequence[str]) -> None:
+    unknown_modes = sorted(set(modes).difference(MODE_TRAIN_SPLIT))
+    if unknown_modes:
+        raise ValueError(f"Unsupported modes: {unknown_modes}. Supported: {sorted(MODE_TRAIN_SPLIT)}")
+    supported_models = {"mlp", "cnn", "rnn", "bilstm_attn", "bilstm_attention", "attention"}
+    unknown_models = sorted(set(models).difference(supported_models))
+    if unknown_models:
+        raise ValueError(f"Unsupported models: {unknown_models}. Supported: {sorted(supported_models)}")
 
 
 def evaluate_by_attack(records: Sequence[TextRecord], pred: Sequence[int]) -> Dict[str, Dict[str, object]]:
@@ -599,7 +771,7 @@ def ast_quality_review(cfg: RunConfig) -> Dict[str, object]:
                 "readability_check": readable,
                 "risk_note": "normal sample has aggressive attack" if risky else "",
                 "review_verdict": verdict,
-                "reviewer": "codex_assisted_quality_check",
+                "check_method": "rule_based_quality_check",
             }
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
 
@@ -608,7 +780,7 @@ def ast_quality_review(cfg: RunConfig) -> Dict[str, object]:
         "verdict_counts": dict(summary_counter),
         "pass_rate": summary_counter["pass"] / max(len(sample), 1),
         "output": str(output_path),
-        "note": "This is a Codex-assisted quality review file; final human sign-off should be done by the student if required.",
+        "note": "This is a rule-based programmatic quality check; final human review should be done if required.",
     }
     summary_path = cfg.output_dir / "review" / "ast_quality_summary.json"
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -663,6 +835,9 @@ def write_submission_report(cfg: RunConfig, results: Dict[str, object], attack_s
         f"- 实验模式：{', '.join(cfg.modes)}",
         f"- 分类器训练 epoch：{cfg.clf_epochs}",
         f"- max_len={cfg.max_len}, max_vocab={cfg.max_vocab}, batch_size={cfg.batch_size}",
+        f"- Focal Loss gamma：{cfg.focal_gamma}",
+        f"- 模型集成：{'启用' if cfg.run_ensemble else '关闭'}"
+        + (f"，soft voting 成员={', '.join(cfg.ensemble_models)}" if cfg.run_ensemble else ""),
         "",
         "## 结果摘要",
         "",
@@ -696,7 +871,7 @@ def write_submission_report(cfg: RunConfig, results: Dict[str, object], attack_s
             f"- 抽检样本数：{review_summary.get('sample_size')}",
             f"- 通过率：{review_summary.get('pass_rate'):.4f}",
             f"- 输出：`{review_summary.get('output')}`",
-            "- 注：该文件为 Codex-assisted 质量检查；如果课程要求严格的人类签名审核，需要学生最后确认。",
+            "- 注：该文件为规则程序质检结果；如果课程要求严格的人类签名审核，需要学生最后确认。",
             "",
             "## Hugging Face gated 数据集尝试",
             "",
@@ -724,8 +899,13 @@ def parse_args() -> RunConfig:
     parser = argparse.ArgumentParser(description="Run full submission training/evaluation pipeline.")
     parser.add_argument("--dataset-dir", default="data/ast_experiment")
     parser.add_argument("--output-dir", default="output/submission")
-    parser.add_argument("--modes", nargs="+", default=["baseline", "text_ast", "embedding_fgm", "text_ast_fgm"])
-    parser.add_argument("--models", nargs="+", default=["mlp", "cnn", "rnn"])
+    parser.add_argument("--modes", nargs="+", default=DEFAULT_MODES)
+    parser.add_argument("--models", nargs="+", default=DEFAULT_MODELS)
+    parser.add_argument(
+        "--full-matrix",
+        action="store_true",
+        help="Train the expanded matrix with Focal Loss modes, BiLSTM-Attention, and ensemble_vote.",
+    )
     parser.add_argument("--vector-size", type=int, default=100)
     parser.add_argument("--max-vocab", type=int, default=30000)
     parser.add_argument("--max-len", type=int, default=32)
@@ -734,7 +914,10 @@ def parse_args() -> RunConfig:
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--fgm-epsilon", type=float, default=0.5)
+    parser.add_argument("--focal-gamma", type=float, default=2.0)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
+    parser.add_argument("--no-ensemble", action="store_true", help="Disable ensemble_vote evaluation.")
+    parser.add_argument("--ensemble-models", nargs="+", default=DEFAULT_ENSEMBLE_MODELS)
     parser.add_argument("--confidence-attack-limit", type=int, default=1000, help="0 means search all clean spam test samples.")
     parser.add_argument(
         "--confidence-attack-strength",
@@ -744,11 +927,13 @@ def parse_args() -> RunConfig:
     )
     parser.add_argument("--review-sample-size", type=int, default=200, help="0 means review all AST test samples.")
     args = parser.parse_args()
+    modes = FULL_MODES if args.full_matrix and args.modes == DEFAULT_MODES else args.modes
+    models = FULL_MODELS if args.full_matrix and args.models == DEFAULT_MODELS else args.models
     return RunConfig(
         dataset_dir=Path(args.dataset_dir),
         output_dir=Path(args.output_dir),
-        modes=args.modes,
-        models=args.models,
+        modes=modes,
+        models=models,
         vector_size=args.vector_size,
         max_vocab=args.max_vocab,
         max_len=args.max_len,
@@ -757,10 +942,13 @@ def parse_args() -> RunConfig:
         batch_size=args.batch_size,
         seed=args.seed,
         fgm_epsilon=args.fgm_epsilon,
+        focal_gamma=args.focal_gamma,
         learning_rate=args.learning_rate,
         confidence_attack_limit=args.confidence_attack_limit,
         confidence_attack_strength=args.confidence_attack_strength,
         review_sample_size=args.review_sample_size,
+        run_ensemble=not args.no_ensemble,
+        ensemble_models=args.ensemble_models,
     )
 
 

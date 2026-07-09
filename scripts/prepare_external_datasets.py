@@ -218,8 +218,8 @@ def parse_args() -> argparse.Namespace:
         "--sources",
         nargs="+",
         choices=["tensorlayer", "spam_lr", "fbs", "uci_en"],
-        default=["tensorlayer", "spam_lr", "fbs"],
-        help="Datasets to prepare. uci_en is optional English external data.",
+        default=["tensorlayer", "spam_lr", "fbs", "uci_en"],
+        help="Datasets to prepare. Chinese sources are used for AST splits; uci_en is prepared for external English evaluation.",
     )
     parser.add_argument("--force", action="store_true", help="Re-download/re-clone sources.")
     return parser.parse_args()

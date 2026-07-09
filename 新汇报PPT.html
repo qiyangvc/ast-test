@@ -188,6 +188,14 @@
             font-size: 20px;
             margin-top: 16px;
         }
+        .compact-table {
+            font-size: 18px;
+            line-height: 1.38;
+        }
+        .compact-table th,
+        .compact-table td {
+            padding: 9px 12px;
+        }
         th, td {
             padding: 12px 16px;
             text-align: left;
@@ -364,29 +372,52 @@
 <div class="slide content-slide">
     <h2>05 基础模型承接与 AST 训练矩阵</h2>
     <div class="body">
-        <div class="two-col">
-            <div class="col">
-                <h3>承接的基础分类器</h3>
-                <ul>
-                    <li>MLP：词向量平均池化，速度快</li>
-                    <li>TextCNN：2/3/4/5-gram 卷积核</li>
-                    <li>BiLSTM：双向上下文序列建模</li>
-                </ul>
-            </div>
-            <div class="col">
-                <h3>四组实验模式</h3>
-                <ul>
-                    <li>baseline：只用 clean train</li>
-                    <li>text_ast：clean + AST 文本训练</li>
-                    <li>embedding_fgm：embedding 级 FGM</li>
-                    <li>text_ast_fgm：文本 AST + FGM 组合</li>
-                </ul>
-            </div>
-        </div>
+        <table class="compact-table">
+            <tr>
+                <th>旧版模型 / 方法</th>
+                <th>当前项目承接方式</th>
+                <th>状态</th>
+            </tr>
+            <tr>
+                <td>MLP（基线）</td>
+                <td>Word2Vec + 平均池化 + MLP</td>
+                <td>已保留，作为 baseline / text_ast / FGM 四组对比</td>
+            </tr>
+            <tr>
+                <td>RNN（基线）</td>
+                <td>双向 LSTM 序列模型</td>
+                <td>已保留，报告中统一记为 BiLSTM / rnn</td>
+            </tr>
+            <tr>
+                <td>CNN（基线）</td>
+                <td>TextCNN</td>
+                <td>已保留，是 clean / AST 主力对比模型</td>
+            </tr>
+            <tr>
+                <td>+ Focal Loss</td>
+                <td>当前使用 class-weight CE 处理类别不平衡</td>
+                <td>未单独重跑 Focal Loss，作为后续可扩展项</td>
+            </tr>
+            <tr>
+                <td>多尺度 TextCNN</td>
+                <td>2 / 3 / 4 / 5-gram 卷积核并行池化</td>
+                <td>已实现，对应当前 cnn 模型</td>
+            </tr>
+            <tr>
+                <td>模型集成（投票）</td>
+                <td>当前保留 12 个模型独立指标</td>
+                <td>未作为最终指标，可后续用 MLP/CNN/RNN 投票补充</td>
+            </tr>
+            <tr class="best">
+                <td>BiLSTM-Attention</td>
+                <td>当前为 BiLSTM 池化版</td>
+                <td>Attention 未纳入最终训练，本次重点转向 AST 鲁棒性</td>
+            </tr>
+        </table>
         <div class="code-block">vector_size=200, max_vocab=50000, max_len=64
 w2v_epochs=20, clf_epochs=10, batch_size=512</div>
         <div class="box bridge-box">
-            <strong>承接关系：</strong>旧版模型部分作为 baseline 体系保留；本次重点把评价从单一 clean accuracy 扩展到 clean / AST / UCI / 跨扰动泛化。
+            <strong>承接关系：</strong>旧版表格中的基线、RNN、CNN 和多尺度 TextCNN 已进入当前实验；Focal Loss、投票集成和 Attention 不硬套旧指标，本次重点转为 AST 对抗训练、强扰动测试和跨扰动泛化。
         </div>
     </div>
     <div class="page-num">6 / 10</div>

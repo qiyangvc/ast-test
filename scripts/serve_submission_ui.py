@@ -33,7 +33,13 @@ class SubmissionUIHandler(BaseHTTPRequestHandler):
             self._send_file(STATIC_ROOT / "index.html")
             return
         if parsed.path == "/api/models":
-            self._send_json({"models": self.service.available_models(), "metrics": self.service.metrics_summary()})
+            self._send_json(
+                {
+                    "models": self.service.available_models(),
+                    "metrics": self.service.metrics_summary(),
+                    "output_dir": str(self.service.output_dir),
+                }
+            )
             return
         if parsed.path == "/api/metrics":
             self._send_json({"metrics": self.service.metrics_summary()})

@@ -25,6 +25,7 @@ DEFAULT_MAX_LEN = 64
 DEFAULT_BATCH_SIZE = 128
 TRAINING_AST_STRENGTH = "mild"
 TRAINING_MAX_VARIANTS_BY_LABEL = {"spam": 2, "normal": 1}
+DEFAULT_ENSEMBLE_MODELS = ["mlp", "cnn", "rnn", "bilstm_attn"]
 
 
 def tokens_from_segmented(segmented: str) -> List[str]:
@@ -110,6 +111,36 @@ class RNNClassifierTorch(nn.Module):
         return self.fc(self.dropout(pooled))
 
 
+class BiLSTMAttentionClassifierTorch(nn.Module):
+    def __init__(self, embedding_shape: Sequence[int], hidden: int = 64, dropout: float = 0.3):
+        super().__init__()
+        emb_dim = int(embedding_shape[1])
+        embedding_matrix = torch.zeros(tuple(embedding_shape), dtype=torch.float32)
+        self.embedding = nn.Embedding.from_pretrained(embedding_matrix, freeze=False, padding_idx=0)
+        self.lstm = nn.LSTM(
+            emb_dim,
+            hidden,
+            batch_first=True,
+            bidirectional=True,
+            dropout=0.0,
+        )
+        self.attention = nn.Linear(hidden * 2, 1)
+        self.dropout = nn.Dropout(dropout)
+        self.fc = nn.Linear(hidden * 2, 2)
+
+    def forward(self, ids: torch.Tensor):
+        return self.forward_embeds(ids, self.embedding(ids))
+
+    def forward_embeds(self, ids: torch.Tensor, embeds: torch.Tensor):
+        out, _ = self.lstm(embeds)
+        mask = ids != 0
+        scores = self.attention(torch.tanh(out)).squeeze(-1)
+        scores = scores.masked_fill(~mask, -1e9)
+        weights = torch.softmax(scores, dim=1).unsqueeze(-1)
+        pooled = (out * weights).sum(dim=1)
+        return self.fc(self.dropout(pooled))
+
+
 def make_model(model_name: str, embedding_shape: Sequence[int]) -> nn.Module:
     if model_name == "mlp":
         return MLPClassifierTorch(embedding_shape)
@@ -117,6 +148,8 @@ def make_model(model_name: str, embedding_shape: Sequence[int]) -> nn.Module:
         return CNNClassifierTorch(embedding_shape)
     if model_name == "rnn":
         return RNNClassifierTorch(embedding_shape)
+    if model_name in {"bilstm_attn", "bilstm_attention", "attention"}:
+        return BiLSTMAttentionClassifierTorch(embedding_shape)
     raise ValueError(f"Unsupported model: {model_name}")
 
 
@@ -185,6 +218,8 @@ class SubmissionModelService:
         return rows
 
     def load_model(self, mode: str, model_name: str) -> LoadedModel:
+        if model_name == "ensemble_vote":
+            raise ValueError("Use load_ensemble_models for ensemble_vote.")
         key = (mode, model_name)
         cached = self._cache.get(key)
         if cached is not None:
@@ -209,6 +244,26 @@ class SubmissionModelService:
         model.eval()
         loaded = LoadedModel(mode=mode, model_name=model_name, model=model, word2idx=word2idx, embedding_shape=embedding_shape)
         self._cache[key] = loaded
+        return loaded
+
+    def ensemble_members(self, mode: str) -> List[str]:
+        payload = ((self._metrics.get("runs") or {}).get(mode) or {}).get("ensemble_vote") or {}
+        members = list(payload.get("ensemble_members") or [])
+        if not members:
+            members = list((self._metrics.get("config") or {}).get("ensemble_models") or DEFAULT_ENSEMBLE_MODELS)
+        available = self.available_models().get(mode, [])
+        return [name for name in members if name in available and name != "ensemble_vote"]
+
+    def load_ensemble_models(self, mode: str) -> List[LoadedModel]:
+        members = self.ensemble_members(mode)
+        loaded = []
+        for member in members:
+            try:
+                loaded.append(self.load_model(mode, member))
+            except FileNotFoundError:
+                continue
+        if len(loaded) < 2:
+            raise FileNotFoundError(f"Need at least two trained models for ensemble_vote in mode={mode}.")
         return loaded
 
     def vectorize_texts(self, texts: Sequence[str], word2idx: Dict[str, int]) -> Tuple[np.ndarray, List[Dict[str, object]]]:
@@ -237,6 +292,8 @@ class SubmissionModelService:
         return x, meta
 
     def predict_many(self, texts: Sequence[str], mode: str = "text_ast_fgm", model_name: str = "cnn") -> List[Dict[str, object]]:
+        if model_name == "ensemble_vote":
+            return self.predict_many_ensemble(texts, mode=mode)
         loaded = self.load_model(mode, model_name)
         x, meta = self.vectorize_texts(texts, loaded.word2idx)
         ids = torch.tensor(x)
@@ -262,6 +319,43 @@ class SubmissionModelService:
                             },
                         }
                     )
+        return outputs
+
+    def predict_many_ensemble(self, texts: Sequence[str], mode: str = "text_ast_fgm") -> List[Dict[str, object]]:
+        if not texts:
+            return []
+        loaded_models = self.load_ensemble_models(mode)
+        word2idx = loaded_models[0].word2idx
+        x, meta = self.vectorize_texts(texts, word2idx)
+        ids = torch.tensor(x)
+        prob_items = []
+        with torch.no_grad():
+            for loaded in loaded_models:
+                chunks = []
+                for start in range(0, len(texts), self.batch_size):
+                    logits = loaded.model(ids[start : start + self.batch_size])
+                    chunks.append(torch.softmax(logits, dim=1).cpu().numpy())
+                prob_items.append(np.vstack(chunks))
+        avg_probs = np.mean(np.stack(prob_items, axis=0), axis=0)
+        outputs: List[Dict[str, object]] = []
+        members = [loaded.model_name for loaded in loaded_models]
+        for idx, row in enumerate(avg_probs):
+            pred_id = int(row.argmax())
+            outputs.append(
+                {
+                    **meta[idx],
+                    "mode": mode,
+                    "model": "ensemble_vote",
+                    "ensemble_members": members,
+                    "label_id": pred_id,
+                    "label": LABEL_ID_TO_NAME[pred_id],
+                    "confidence": float(row[pred_id]),
+                    "probabilities": {
+                        "spam": float(row[LABEL_NAME_TO_ID["spam"]]),
+                        "normal": float(row[LABEL_NAME_TO_ID["normal"]]),
+                    },
+                }
+            )
         return outputs
 
     def predict(self, text: str, mode: str = "text_ast_fgm", model_name: str = "cnn") -> Dict[str, object]:

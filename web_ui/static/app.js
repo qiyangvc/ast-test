@@ -172,7 +172,7 @@ async function loadInitialState() {
   state.metrics = data.metrics || [];
   renderModelSelectors();
   renderMetrics();
-  $("artifactStatus").textContent = "已加载完整提交产物 output/submission_full_20260706_full";
+  $("artifactStatus").textContent = `已加载模型产物 ${data.output_dir || ""}`.trim();
 }
 
 async function runPredict() {

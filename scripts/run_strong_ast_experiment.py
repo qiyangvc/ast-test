@@ -18,6 +18,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts.submission_pipeline import (
+    DEFAULT_ENSEMBLE_MODELS,
+    DEFAULT_MODELS,
+    DEFAULT_MODES,
+    FULL_MODELS,
+    FULL_MODES,
     RunConfig,
     ast_quality_review,
     attempt_huggingface_gated,
@@ -54,8 +59,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset-dir", default=str(Path(Config.DATA_DIR) / strong_cfg["output_dir_name"]))
     parser.add_argument("--output-dir", default="output/submission_strong_ast_20260706_full")
     parser.add_argument("--skip-build", action="store_true")
-    parser.add_argument("--modes", nargs="+", default=["baseline", "text_ast", "embedding_fgm", "text_ast_fgm"])
-    parser.add_argument("--models", nargs="+", default=["mlp", "cnn", "rnn"])
+    parser.add_argument("--modes", nargs="+", default=DEFAULT_MODES)
+    parser.add_argument("--models", nargs="+", default=DEFAULT_MODELS)
+    parser.add_argument(
+        "--full-matrix",
+        action="store_true",
+        help="Train the expanded matrix with Focal Loss modes, BiLSTM-Attention, and ensemble_vote.",
+    )
     parser.add_argument("--vector-size", type=int, default=200)
     parser.add_argument("--max-vocab", type=int, default=50000)
     parser.add_argument("--max-len", type=int, default=64)
@@ -64,7 +74,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=512)
     parser.add_argument("--seed", type=int, default=strong_cfg["seed"])
     parser.add_argument("--fgm-epsilon", type=float, default=0.5)
+    parser.add_argument("--focal-gamma", type=float, default=2.0)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
+    parser.add_argument("--no-ensemble", action="store_true", help="Disable ensemble_vote evaluation.")
+    parser.add_argument("--ensemble-models", nargs="+", default=DEFAULT_ENSEMBLE_MODELS)
     parser.add_argument("--max-variants-spam", type=int, default=strong_cfg["max_variants_spam"])
     parser.add_argument("--max-variants-normal", type=int, default=strong_cfg["max_variants_normal"])
     parser.add_argument("--ast-strength", choices=["mild", "balanced", "strong"], default=strong_cfg["ast_strength"])
@@ -79,6 +92,8 @@ def main() -> None:
     args = parse_args()
     dataset_dir = Path(args.dataset_dir)
     output_dir = Path(args.output_dir)
+    modes = FULL_MODES if args.full_matrix and args.modes == DEFAULT_MODES else args.modes
+    models = FULL_MODELS if args.full_matrix and args.models == DEFAULT_MODELS else args.models
 
     if not args.skip_build:
         input_dirs, canonical_jsonl = sources_from_manifest(Path(args.base_manifest))
@@ -104,8 +119,8 @@ def main() -> None:
     cfg = RunConfig(
         dataset_dir=dataset_dir,
         output_dir=output_dir,
-        modes=args.modes,
-        models=args.models,
+        modes=modes,
+        models=models,
         vector_size=args.vector_size,
         max_vocab=args.max_vocab,
         max_len=args.max_len,
@@ -114,10 +129,13 @@ def main() -> None:
         batch_size=args.batch_size,
         seed=args.seed,
         fgm_epsilon=args.fgm_epsilon,
+        focal_gamma=args.focal_gamma,
         learning_rate=args.learning_rate,
         confidence_attack_limit=args.confidence_attack_limit,
         confidence_attack_strength=args.confidence_attack_strength,
         review_sample_size=args.review_sample_size,
+        run_ensemble=not args.no_ensemble,
+        ensemble_models=args.ensemble_models,
     )
     results = train_and_evaluate(cfg)
     attack_summary = confidence_search_attack(cfg)

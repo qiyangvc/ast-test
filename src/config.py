@@ -46,7 +46,26 @@ class Config:
         "clf_epochs": 10,
         "batch_size": 512,
         "fgm_epsilon": 0.5,
+        "focal_gamma": 2.0,
         "learning_rate": 1e-3,
+        "run_ensemble": True,
+        "ensemble_models": ["mlp", "cnn", "rnn"],
+    }
+
+    FULL_SUBMISSION_TRAINING_CONFIG = {
+        **SUBMISSION_TRAINING_CONFIG,
+        "modes": [
+            "baseline",
+            "focal",
+            "text_ast",
+            "text_ast_focal",
+            "embedding_fgm",
+            "embedding_fgm_focal",
+            "text_ast_fgm",
+            "text_ast_fgm_focal",
+        ],
+        "models": ["mlp", "cnn", "rnn", "bilstm_attn"],
+        "ensemble_models": ["mlp", "cnn", "rnn", "bilstm_attn"],
     }
 
     @classmethod

@@ -9,9 +9,11 @@ report performance by attack type instead of only overall accuracy.
 """
 from __future__ import annotations
 
+import json
 import random
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 try:
@@ -21,6 +23,9 @@ except ImportError:  # pragma: no cover - handled at runtime for minimal envs
 
 
 AttackType = str
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_LEXICON_PATH = PROJECT_ROOT / "lexicons" / "chinese_spam_ast_lexicon.json"
+_JIEBA_LEXICON_LOADED = False
 
 
 @dataclass
@@ -31,6 +36,148 @@ class AttackResult:
     adversarial: str
     attack_type: AttackType
     operations: List[str] = field(default_factory=list)
+
+
+def _tuple_map(payload: object, field_name: str) -> Dict[str, Tuple[str, ...]]:
+    if not isinstance(payload, dict):
+        raise ValueError(f"Lexicon field {field_name!r} must be an object.")
+    result: Dict[str, Tuple[str, ...]] = {}
+    for key, values in payload.items():
+        if not isinstance(key, str) or not key.strip():
+            raise ValueError(f"Lexicon field {field_name!r} contains an invalid key: {key!r}")
+        if not isinstance(values, list) or not values:
+            raise ValueError(f"Lexicon field {field_name!r}.{key!r} must be a non-empty list.")
+        cleaned = tuple(str(value).strip() for value in values if str(value).strip())
+        if not cleaned:
+            raise ValueError(f"Lexicon field {field_name!r}.{key!r} has no usable variants.")
+        result[key] = cleaned
+    return result
+
+
+def _string_map(payload: object, field_name: str) -> Dict[str, str]:
+    if not isinstance(payload, dict):
+        raise ValueError(f"Lexicon field {field_name!r} must be an object.")
+    result: Dict[str, str] = {}
+    for key, value in payload.items():
+        if not isinstance(key, str) or not key.strip():
+            raise ValueError(f"Lexicon field {field_name!r} contains an invalid key: {key!r}")
+        value_text = str(value).strip()
+        if not value_text:
+            raise ValueError(f"Lexicon field {field_name!r}.{key!r} has an empty replacement.")
+        result[key] = value_text
+    return result
+
+
+def _pair_list(payload: object, field_name: str) -> Tuple[Tuple[str, str], ...]:
+    if not isinstance(payload, list):
+        raise ValueError(f"Lexicon field {field_name!r} must be a list.")
+    pairs: List[Tuple[str, str]] = []
+    for item in payload:
+        if not isinstance(item, list) or len(item) != 2:
+            raise ValueError(f"Lexicon field {field_name!r} contains an invalid pair: {item!r}")
+        key, value = (str(item[0]).strip(), str(item[1]).strip())
+        if not key or not value:
+            raise ValueError(f"Lexicon field {field_name!r} contains an empty pair: {item!r}")
+        pairs.append((key, value))
+    return tuple(pairs)
+
+
+def _string_tuple(payload: object, field_name: str) -> Tuple[str, ...]:
+    if not isinstance(payload, list):
+        raise ValueError(f"Lexicon field {field_name!r} must be a list.")
+    values = tuple(str(item).strip() for item in payload if str(item).strip())
+    if not values:
+        raise ValueError(f"Lexicon field {field_name!r} must contain at least one value.")
+    return values
+
+
+def load_ast_lexicon(path: Path | str = DEFAULT_LEXICON_PATH) -> Dict[str, object]:
+    """Load and validate the external AST lexicon.
+
+    The lexicon is intentionally outside this Python module so keyword coverage
+    can be audited and extended without changing attack logic.
+    """
+    lexicon_path = Path(path)
+    payload = json.loads(lexicon_path.read_text(encoding="utf-8"))
+    required = {
+        "phrase_variants",
+        "strong_phrase_variants",
+        "pinyin_abbreviations",
+        "char_variants",
+        "traditional_variants",
+        "multi_keyword_obfuscation_keywords",
+        "amount_fallbacks",
+        "url_keyword_replacements",
+        "benefit_hints",
+        "default_benefits",
+        "default_contact_hints",
+        "semantic_templates",
+        "urgency_hints",
+    }
+    missing = sorted(required.difference(payload))
+    if missing:
+        raise ValueError(f"AST lexicon missing required fields: {missing}")
+    return {
+        "phrase_variants": _tuple_map(payload["phrase_variants"], "phrase_variants"),
+        "strong_phrase_variants": _tuple_map(payload["strong_phrase_variants"], "strong_phrase_variants"),
+        "pinyin_abbreviations": _tuple_map(payload["pinyin_abbreviations"], "pinyin_abbreviations"),
+        "char_variants": _tuple_map(payload["char_variants"], "char_variants"),
+        "traditional_variants": _string_map(payload["traditional_variants"], "traditional_variants"),
+        "multi_keyword_obfuscation_keywords": _string_tuple(
+            payload["multi_keyword_obfuscation_keywords"],
+            "multi_keyword_obfuscation_keywords",
+        ),
+        "amount_fallbacks": _pair_list(payload["amount_fallbacks"], "amount_fallbacks"),
+        "url_keyword_replacements": _pair_list(payload["url_keyword_replacements"], "url_keyword_replacements"),
+        "benefit_hints": _pair_list(payload["benefit_hints"], "benefit_hints"),
+        "default_benefits": _string_tuple(payload["default_benefits"], "default_benefits"),
+        "default_contact_hints": _string_tuple(payload["default_contact_hints"], "default_contact_hints"),
+        "semantic_templates": _string_tuple(payload["semantic_templates"], "semantic_templates"),
+        "urgency_hints": _string_tuple(payload["urgency_hints"], "urgency_hints"),
+    }
+
+
+def _terms_from_tuple_map(payload: Dict[str, Tuple[str, ...]]) -> Iterable[str]:
+    for key, values in payload.items():
+        yield key
+        yield from values
+
+
+def ast_lexicon_terms(path: Path | str = DEFAULT_LEXICON_PATH) -> List[str]:
+    """Return AST domain terms that should be visible to segmentation/audits."""
+    lexicon = load_ast_lexicon(path)
+    terms = set()
+    for field in ("phrase_variants", "strong_phrase_variants", "pinyin_abbreviations"):
+        terms.update(_terms_from_tuple_map(lexicon[field]))
+    terms.update(lexicon["multi_keyword_obfuscation_keywords"])
+    terms.update(lexicon["traditional_variants"].keys())
+    terms.update(lexicon["traditional_variants"].values())
+    for field in ("amount_fallbacks", "url_keyword_replacements", "benefit_hints"):
+        for key, value in lexicon[field]:
+            terms.add(key)
+            terms.add(value)
+    for field in ("default_benefits", "default_contact_hints", "semantic_templates", "urgency_hints"):
+        terms.update(lexicon[field])
+
+    cleaned = {
+        term.strip()
+        for term in terms
+        if isinstance(term, str)
+        and len(term.strip()) >= 2
+        and "{" not in term
+        and "}" not in term
+    }
+    return sorted(cleaned, key=len, reverse=True)
+
+
+def _ensure_jieba_lexicon_loaded() -> None:
+    """Register AST domain vocabulary with jieba once per process."""
+    global _JIEBA_LEXICON_LOADED
+    if jieba is None or _JIEBA_LEXICON_LOADED:
+        return
+    for term in ast_lexicon_terms(DEFAULT_LEXICON_PATH):
+        jieba.add_word(term, freq=200000)
+    _JIEBA_LEXICON_LOADED = True
 
 
 def compact_segmented_text(text: str) -> str:
@@ -48,6 +195,7 @@ def segment_for_project(text: str) -> str:
         # installed yet. It is less linguistically accurate, so the manifest
         # records the generator settings for reproducibility.
         return " ".join([ch for ch in text if not ch.isspace()])
+    _ensure_jieba_lexicon_loaded()
     words = [w.strip() for w in jieba.cut(text) if w.strip()]
     return " ".join(words)
 
@@ -55,134 +203,9 @@ def segment_for_project(text: str) -> str:
 class ChineseSpamTextAttacker:
     """Generate realistic Chinese spam-text adversarial variants."""
 
-    # Phrase-level replacements cover high-value spam keywords and contact terms.
-    PHRASE_VARIANTS: Dict[str, Sequence[str]] = {
-        "微信": ("微 信", "薇信", "威信", "维信", "胃星", "卫星", "V信", "vx"),
-        "加微信": ("加薇信", "加V信", "加vx", "加 微 信", "家维信"),
-        "加我": ("家我", "佳我", "加 我", "jia我"),
-        "QQ": ("扣扣", "Q Q", "企鹅号", "q号"),
-        "qq": ("扣扣", "q q", "企鹅号", "q号"),
-        "电话": ("电 话", "垫话", "tel", "dian话"),
-        "中奖": ("中 奖", "中獎", "仲奖", "zhong奖"),
-        "免费": ("免 费", "免沸", "0元", "mian费"),
-        "领取": ("领 取", "領取", "ling取", "领渠"),
-        "红包": ("红 包", "紅包", "hong包"),
-        "优惠": ("优 惠", "優惠", "you惠"),
-        "充值": ("充 值", "沖值", "chong值"),
-        "贷款": ("贷 款", "貸款", "代款", "dai款"),
-        "兼职": ("兼 职", "兼職", "蒹职", "jian职"),
-        "赚钱": ("赚 钱", "賺钱", "zhuan钱", "掙钱"),
-        "博彩": ("博 彩", "搏彩", "bo彩"),
-        "发票": ("发 票", "發票", "fa票"),
-        "链接": ("链 接", "連结", "lian接"),
-        "点击": ("点 击", "點击", "dian击"),
-        "客服": ("客 服", "ke服", "喀服"),
-        "活动": ("活 动", "活動", "huo动"),
-        "提现": ("提 现", "提现", "ti现"),
-        "返现": ("返 现", "返現", "fan现"),
-    }
-
-    STRONG_PHRASE_VARIANTS: Dict[str, Sequence[str]] = {
-        "微信": ("w信", "w x", "v/x", "微丨信", "薇 x", "wx"),
-        "加微信": ("+v/x", "加 w x", "私我wx", "走薇x", "找我看资料"),
-        "加我": ("私我", "找我", "戳我", "看头像"),
-        "QQ": ("Q/ Q", "扣 扣", "q鹅", "q/号"),
-        "电话": ("电丨话", "tel.", "来电", "号 码"),
-        "中奖": ("中jiang", "中·奖", "有喜", "抽中名额"),
-        "免费": ("0门槛", "免米", "无偿", "0元拿"),
-        "领取": ("点开拿", "去拿", "领·取", "lq"),
-        "红包": ("红苞", "福袋", "福利包", "h b"),
-        "优惠": ("优会", "折扣码", "you惠", "券包"),
-        "充值": ("冲值", "充 值", "chong值", "到账"),
-        "贷款": ("放款", "周转金", "dai款", "额度"),
-        "兼职": ("兼zhi", "副业", "日结活", "线上活"),
-        "赚钱": ("zhuan米", "进账", "收益", "搞钱"),
-        "发票": ("票据", "fa票", "开飘", "专票"),
-        "链接": ("入口", "地止", "链·接", "lian接"),
-        "点击": ("戳开", "点一下", "dian开", "点·击"),
-        "客服": ("k服", "专员", "小助手", "客fu"),
-        "提现": ("ti现", "到卡", "秒到", "提·现"),
-        "返现": ("fan现", "返钱", "返米", "回款"),
-    }
-
-    PINYIN_ABBREVIATIONS: Dict[str, Sequence[str]] = {
-        "微信": ("wx", "vx", "w信"),
-        "客服": ("kf", "k服"),
-        "免费": ("mf", "0费"),
-        "领取": ("lq", "领q"),
-        "红包": ("hb", "红b"),
-        "点击": ("dj", "点j"),
-        "链接": ("lj", "链j"),
-        "电话": ("dh", "tel"),
-        "充值": ("cz", "充z"),
-        "贷款": ("dk", "贷k"),
-        "中奖": ("zj", "中j"),
-        "发票": ("fp", "发p"),
-        "优惠": ("yh", "优h"),
-        "提现": ("tx", "提x"),
-        "返现": ("fx", "返x"),
-        "赚钱": ("zq", "赚q"),
-        "兼职": ("jz", "兼z"),
-    }
-
-    CHAR_VARIANTS: Dict[str, Sequence[str]] = {
-        "微": ("薇", "威", "维", "胃", "卫"),
-        "信": ("心", "欣", "新", "伩", "星"),
-        "奖": ("獎", "浆", "奨"),
-        "领": ("領", "令"),
-        "取": ("渠", "娶"),
-        "赚": ("賺", "攥", "转"),
-        "钱": ("銭", "前"),
-        "贷": ("貸", "代"),
-        "款": ("欵",),
-        "充": ("沖", "冲"),
-        "值": ("直", "植"),
-        "票": ("漂", "飘"),
-        "击": ("擊", "机"),
-        "客": ("喀",),
-        "服": ("俯",),
-        "万": ("萬",),
-        "轻": ("輕",),
-        "松": ("鬆",),
-        "家": ("佳",),
-        "号": ("號",),
-    }
-
-    TRADITIONAL_VARIANTS: Dict[str, str] = {
-        "万": "萬",
-        "与": "與",
-        "业": "業",
-        "东": "東",
-        "乐": "樂",
-        "买": "買",
-        "云": "雲",
-        "优": "優",
-        "传": "傳",
-        "体": "體",
-        "价": "價",
-        "会": "會",
-        "伪": "偽",
-        "贷": "貸",
-        "赚": "賺",
-        "轻": "輕",
-        "过": "過",
-        "远": "遠",
-        "选": "選",
-        "连": "連",
-        "话": "話",
-        "费": "費",
-        "账": "賬",
-        "贴": "貼",
-        "请": "請",
-        "奖": "獎",
-        "击": "擊",
-        "联": "聯",
-        "系": "係",
-        "现": "現",
-        "发": "發",
-        "领": "領",
-        "台": "臺",
-    }
+    # Domain lexicons are loaded from lexicons/chinese_spam_ast_lexicon.json
+    # in __init__, so dataset building, confidence search, and the web UI use
+    # one auditable source of AST vocabulary.
 
     DIGIT_VARIANTS: Dict[str, Sequence[str]] = {
         "0": ("O", "o", "零"),
@@ -198,8 +221,9 @@ class ChineseSpamTextAttacker:
     }
 
     CONTACT_PATTERNS: Sequence[Tuple[re.Pattern, str]] = (
-        (re.compile(r"(?i)(vx|v信|微信|微 信|薇信|维信)"), "contact_wechat"),
+        (re.compile(r"(?i)(vx|v信|wx|wechat|WECHAT|微信|微 信|薇信|维信)"), "contact_wechat"),
         (re.compile(r"(?i)(qq|扣扣|q号|Q Q)"), "contact_qq"),
+        (re.compile(r"(?i)(PHONE|CELLPHONE|HOTLINE)"), "contact_number"),
         (re.compile(r"\d{5,}"), "contact_number"),
     )
 
@@ -211,11 +235,42 @@ class ChineseSpamTextAttacker:
         seed: int = 42,
         max_char_replacements: int = 2,
         max_symbol_insertions: int = 2,
+        lexicon_path: Path | str = DEFAULT_LEXICON_PATH,
     ) -> None:
         self.seed = seed
         self.rng = random.Random(seed)
         self.max_char_replacements = max_char_replacements
         self.max_symbol_insertions = max_symbol_insertions
+        self.lexicon_path = Path(lexicon_path)
+        lexicon = load_ast_lexicon(self.lexicon_path)
+        self.PHRASE_VARIANTS = lexicon["phrase_variants"]
+        self.STRONG_PHRASE_VARIANTS = lexicon["strong_phrase_variants"]
+        self.PINYIN_ABBREVIATIONS = lexicon["pinyin_abbreviations"]
+        self.CHAR_VARIANTS = lexicon["char_variants"]
+        self.TRADITIONAL_VARIANTS = lexicon["traditional_variants"]
+        self.MULTI_KEYWORD_OBFUSCATION_KEYWORDS = lexicon["multi_keyword_obfuscation_keywords"]
+        self.AMOUNT_FALLBACKS = lexicon["amount_fallbacks"]
+        self.URL_KEYWORD_REPLACEMENTS = lexicon["url_keyword_replacements"]
+        self.BENEFIT_HINTS = lexicon["benefit_hints"]
+        self.DEFAULT_BENEFITS = lexicon["default_benefits"]
+        self.DEFAULT_CONTACT_HINTS = lexicon["default_contact_hints"]
+        self.SEMANTIC_TEMPLATES = lexicon["semantic_templates"]
+        self.URGENCY_HINTS = lexicon["urgency_hints"]
+
+    def lexicon_summary(self) -> Dict[str, int]:
+        """Return coverage counts for audit scripts and reports."""
+        return {
+            "phrase_variants": len(self.PHRASE_VARIANTS),
+            "strong_phrase_variants": len(self.STRONG_PHRASE_VARIANTS),
+            "pinyin_abbreviations": len(self.PINYIN_ABBREVIATIONS),
+            "char_variants": len(self.CHAR_VARIANTS),
+            "traditional_variants": len(self.TRADITIONAL_VARIANTS),
+            "multi_keyword_obfuscation_keywords": len(self.MULTI_KEYWORD_OBFUSCATION_KEYWORDS),
+            "amount_fallbacks": len(self.AMOUNT_FALLBACKS),
+            "url_keyword_replacements": len(self.URL_KEYWORD_REPLACEMENTS),
+            "benefit_hints": len(self.BENEFIT_HINTS),
+            "semantic_templates": len(self.SEMANTIC_TEMPLATES),
+        }
 
     def generate(
         self,
@@ -348,7 +403,7 @@ class ChineseSpamTextAttacker:
         keys = [key for key in self.PHRASE_VARIANTS if key in text]
         if not keys:
             return text, []
-        key = self.rng.choice(keys)
+        key = self.rng.choice(sorted(keys, key=len, reverse=True))
         replacement = self.rng.choice(tuple(self.PHRASE_VARIANTS[key]))
         return text.replace(key, replacement, 1), [f"{key}->{replacement}"]
 
@@ -356,7 +411,7 @@ class ChineseSpamTextAttacker:
         keys = [key for key in self.STRONG_PHRASE_VARIANTS if key in text]
         if not keys:
             return text, []
-        key = self.rng.choice(keys)
+        key = self.rng.choice(sorted(keys, key=len, reverse=True))
         replacement = self.rng.choice(tuple(self.STRONG_PHRASE_VARIANTS[key]))
         return text.replace(key, replacement, 1), [f"{key}->{replacement}"]
 
@@ -407,29 +462,13 @@ class ChineseSpamTextAttacker:
         return "".join(chars), operations
 
     def _multi_keyword_obfuscation(self, text: str) -> Tuple[str, List[str]]:
-        keywords = [
-            "微信",
-            "加微信",
-            "领取",
-            "红包",
-            "免费",
-            "点击",
-            "链接",
-            "客服",
-            "电话",
-            "贷款",
-            "发票",
-            "充值",
-            "提现",
-            "返现",
-        ]
-        keys = [key for key in keywords if key in text]
+        keys = [key for key in self.MULTI_KEYWORD_OBFUSCATION_KEYWORDS if key in text]
         if not keys:
             return text, []
 
         current = text
         operations: List[str] = []
-        self.rng.shuffle(keys)
+        keys = sorted(keys, key=len, reverse=True)
         for key in keys[:4]:
             if key not in current or len(key) < 2:
                 continue
@@ -459,7 +498,7 @@ class ChineseSpamTextAttacker:
             return text[: match.start()] + replacement + text[match.end() :], [f"{value}->{replacement}"]
 
         fallback = []
-        for key, replacement in (("免费", "0门槛"), ("红包", "福袋"), ("优惠", "券包"), ("提现", "到卡")):
+        for key, replacement in self.AMOUNT_FALLBACKS:
             if key in text:
                 fallback.append((key, replacement))
         if not fallback:
@@ -501,8 +540,9 @@ class ChineseSpamTextAttacker:
 
     def _contact_split(self, text: str) -> Tuple[str, List[str]]:
         replacements: Sequence[Tuple[re.Pattern, Sequence[str]]] = (
-            (re.compile(r"(?i)(微信|微 信|薇信|维信|vx|v信|wx)"), ("w x", "v/x", "微丨信", "薇 x", "wx")),
+            (re.compile(r"(?i)(微信|微 信|薇信|维信|vx|v信|wx|WECHAT)"), ("w x", "v/x", "微丨信", "薇 x", "wx")),
             (re.compile(r"(?i)(QQ|qq|扣扣|q号|Q Q)"), ("Q/ Q", "扣 扣", "q鹅", "q/号")),
+            (re.compile(r"(?i)(PHONE|CELLPHONE|HOTLINE)"), ("tel.", "联络号", "专线", "号 码")),
         )
         for pattern, choices in replacements:
             match = pattern.search(text)
@@ -527,7 +567,7 @@ class ChineseSpamTextAttacker:
             replacement = replacement.replace("www.", "w w w点").replace(".", "点").replace("/", "/ ")
             return text[: url_match.start()] + replacement + text[url_match.end() :], [f"{value}->{replacement}"]
 
-        for key, replacement in (("链接", "入口"), ("网址", "地止"), ("点击", "戳开"), ("登录", "登 录")):
+        for key, replacement in self.URL_KEYWORD_REPLACEMENTS:
             if key in text:
                 return text.replace(key, replacement, 1), [f"{key}->{replacement}"]
         return text, []
@@ -535,17 +575,17 @@ class ChineseSpamTextAttacker:
     def _semantic_rewrite(self, text: str) -> Tuple[str, List[str]]:
         contact = self._extract_contact_hint(text)
         benefit = self._extract_benefit_hint(text)
-        urgency = self.rng.choice(("过时失效", "名额不多", "今天截止", "系统保留一小时"))
+        context = self._extract_context_hint(text)
+        urgency = self.rng.choice(tuple(self.URGENCY_HINTS))
         contact_action = self._contact_action_hint(contact)
-        templates = (
-            "{benefit}已开放，{contact_action}核对口令，{urgency}",
-            "通知：{benefit}仍可领取，{contact_action}回复88，{urgency}",
-            "不用排队，{contact_action}发口令，{benefit}秒到，{urgency}",
-            "{benefit}入口已开，{contact_action}确认，错过不补",
+        template = self.rng.choice(tuple(self.SEMANTIC_TEMPLATES))
+        rewritten = template.format(
+            benefit=benefit,
+            contact_action=contact_action,
+            urgency=urgency,
+            context=context,
         )
-        template = self.rng.choice(templates)
-        rewritten = template.format(benefit=benefit, contact_action=contact_action, urgency=urgency)
-        return rewritten, [f"semantic_rewrite(benefit={benefit},contact={contact})"]
+        return rewritten, [f"semantic_rewrite(benefit={benefit},contact={contact},context={context})"]
 
     def _mixed_attack(self, text: str) -> Tuple[str, List[str]]:
         operations: List[str] = []
@@ -611,12 +651,16 @@ class ChineseSpamTextAttacker:
     def _extract_contact_hint(self, text: str) -> str:
         if re.search(r"(?i)(微信|vx|wx|v信|薇信|微 信)", text):
             return self.rng.choice(("w x", "v/x", "微丨信", "wx"))
+        if re.search(r"(?i)(WECHAT)", text):
+            return self.rng.choice(("w x", "v/x", "微丨信", "wx"))
         if re.search(r"(?i)(qq|扣扣|q号)", text):
             return self.rng.choice(("Q/ Q", "扣 扣", "q鹅"))
+        if re.search(r"(?i)(PHONE|CELLPHONE|HOTLINE)", text):
+            return self.rng.choice(("tel.", "联络号", "专线"))
         match = re.search(r"\d{6,}", text)
         if match:
             return self._group_number(match.group(0))
-        return self.rng.choice(("私信", "头像", "小助手", "入口"))
+        return self.rng.choice(tuple(self.DEFAULT_CONTACT_HINTS))
 
     def _contact_action_hint(self, contact: str) -> str:
         if contact == "头像":
@@ -627,20 +671,44 @@ class ChineseSpamTextAttacker:
             return "从入口"
         return contact
 
+    def _extract_context_hint(self, text: str) -> str:
+        candidates: List[str] = []
+        placeholder_context = (
+            ("BANK", "银行端"),
+            ("NAME", "专属客户"),
+            ("PLACE", "本地入口"),
+            ("URL", "落地入口"),
+            ("PHONE", "联络通道"),
+            ("CELLPHONE", "联络通道"),
+            ("HOTLINE", "专线通道"),
+            ("WECHAT", "私域入口"),
+            ("DIGIT", "校验位"),
+            ("go.10086", "掌厅入口"),
+            ("手机网", "掌厅入口"),
+        )
+        for key, hint in placeholder_context:
+            if key in text:
+                candidates.append(hint)
+
+        amount = re.search(r"\d+(?:\.\d+)?\s*(?:元|块|万|折|%)?", text)
+        if amount:
+            candidates.append(f"{self._obfuscate_amount(amount.group(0))}档")
+
+        for key, replacement in self.BENEFIT_HINTS:
+            if key in text:
+                candidates.append(replacement)
+                if len(candidates) >= 5:
+                    break
+
+        if candidates:
+            return self.rng.choice(tuple(candidates))
+        return self.rng.choice(("老客通道", "专属入口", "活动页", "校验页", "本地专场", "系统消息"))
+
     def _extract_benefit_hint(self, text: str) -> str:
-        for key, replacement in (
-            ("话费", "话费包"),
-            ("红包", "福袋"),
-            ("提现", "到卡名额"),
-            ("贷款", "周转额度"),
-            ("发票", "票据服务"),
-            ("中奖", "抽中名额"),
-            ("优惠", "券包"),
-            ("充值", "到账福利"),
-        ):
+        for key, replacement in self.BENEFIT_HINTS:
             if key in text:
                 return replacement
-        return self.rng.choice(("福利", "名额", "礼包", "补贴"))
+        return self.rng.choice(tuple(self.DEFAULT_BENEFITS))
 
 
 def attack_type_summary(results: Iterable[AttackResult]) -> Dict[str, int]:
